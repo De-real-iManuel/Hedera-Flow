@@ -31,7 +31,7 @@ backend/.env
 backend/.env.test
 backend/.env.supabase.example
 
-# Documentation and task files
+# Documentation and task files (excluding README and QUICKSTART)
 *_SUMMARY.md
 *_GUIDE.md
 *_INSTRUCTIONS.md
@@ -39,7 +39,6 @@ backend/.env.supabase.example
 *_REFERENCE.md
 *_COMPLETE.md
 *_APPLIED.md
-*_SETUP.md
 *_FIXED.md
 TASK_*.md
 FINAL_*.md
@@ -47,13 +46,12 @@ PITCH_*.md
 SLIDES_*.md
 HEDERA_BOUNTY_SUBMISSION.md
 HEDERA_FLOW_HACKATHON_SUBMISSION.md
-HEDERA_FLOW_ONE_PAGER.md
+HEDERA_FLOW_ONE_PAGER*.md
 SUBMISSION_CHECKLIST.md
 BACKEND_FRONTEND_SYNC.md
 CAMERA_COMPONENT_VERIFICATION.md
 DATABASE_FIXED_RESTART_NEEDED.md
 DESIGN_TOKENS.md
-DOCKER_SETUP.md
 ENV_REFERENCE.md
 ENV_SETUP.md
 FRONTEND_FLOW_AND_DATA_INTEGRATION.md
@@ -62,10 +60,8 @@ FRONTEND_MIGRATION_COMPLETE.md
 GLOBAL_ARCHITECTURE_COMPLETE.md
 FIX_BROWSER_ERROR.md
 
-# Backend documentation
+# Backend documentation (excluding README and essential quickstarts)
 backend/*_SUMMARY.md
-backend/*_GUIDE.md
-backend/*_SETUP.md
 backend/*_APPLIED.md
 backend/*_CHECKLIST.md
 backend/TASK_*.md
@@ -84,8 +80,8 @@ backend/EMAIL_VERIFICATION_GUIDE.md
 backend/ENABLE_VISION_API_NOW.md
 backend/ERROR_HANDLING.md
 backend/GOOGLE_CLOUD_CHECKLIST.md
-backend/GOOGLE_CLOUD_QUICKSTART.md
 backend/GOOGLE_CLOUD_SETUP.md
+backend/GOOGLE_CLOUD_SETUP_FLOW.md
 
 # Test and verification scripts
 backend/debug_*.py
