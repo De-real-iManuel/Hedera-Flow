@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Mobile Camera Test - Hedera Flow</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #000;
+            color: #fff;
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            font-size: 24px;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #888;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+
+        .test-section {
+            background: #1a1a1a;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .test-section h2 {
+            font-size: 18px;
+            margin-bottom: 15px;
+            color: #7C3AED;
+        }
+
+        .info-grid {
+            display: grid;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .info-item {
+            background: #2a2a2a;
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+
+        .info-label {
+            color: #888;
+            font-size: 12px;
+            margin-bottom: 4px;
+        }
+
+        .info-value {
+            color: #fff;
+            font-weight: 500;
+        }
+
+        .status {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .status.success {
+            background: #10B981;
+            color: #fff;
+        }
+
+        .status.error {
+            background: #EF4444;
+            color: #fff;
+        }
+
+        .status.pending {
+            background: #F59E0B;
+            color: #000;
+        }
+
+        button {
+            width: 100%;
+            padding: 16px;
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-bottom: 10px;
+            transition: all 0.2s;
+        }
+
+        button:active {
+            transform: scale(0.98);
+        }
+
+        .btn-primary {
+            background: #7C3AED;
+            color: #fff;
+        }
+
+        .btn-success {
+            background: #10B981;
+            color: #fff;
+        }
+
+        .btn-danger {
+            background: #EF4444;
+            color: #fff;
+        }
+
+        .btn-secondary {
+            background: #2a2a2a;
+            color: #fff;
+        }
+
+        #video-container {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 4/3;
+            background: #000;
+            border-radius: 12px;
+            overflow: hidden;
+            margin-bottom: 15px;
+        }
+
+        #video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .overlay {
+            position: absolute;
+            inset: 20px;
+            border: 2px dashed rgba(124, 58, 237, 0.5);
+            border-radius: 12px;
+            pointer-events: none;
+        }
+
+        .corner {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #7C3AED;
+        }
+
+        .corner.tl { top: 20px; left: 20px; border-right: none; border-bottom: none; border-radius: 8px 0 0 0; }
+        .corner.tr { top: 20px; right: 20px; border-left: none; border-bottom: none; border-radius: 0 8px 0 0; }
+        .corner.bl { bottom: 20px; left: 20px; border-right: none; border-top: none; border-radius: 0 0 0 8px; }
+        .corner.br { bottom: 20px; right: 20px; border-left: none; border-top: none; border-radius: 0 0 8px 0; }
+
+        .guide-text {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.7);
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 14px;
+            text-align: center;
+        }
+
+        #results {
+            margin-top: 20px;
+        }
+
+        .result-item {
+            background: #2a2a2a;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .checklist {
+            list-style: none;
+        }
+
+        .checklist li {
+            padding: 8px 0;
+            border-bottom: 1px solid #2a2a2a;
+        }
+
+        .checklist li:last-child {
+            border-bottom: none;
+        }
+
+        .checklist input[type="checkbox"] {
+            margin-right: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📱 Mobile Camera Test</h1>
+        <p class="subtitle">Hedera Flow MVP - Task 9.7</p>
+
+        <!-- Device Info -->
+        <div class="test-section">
+            <h2>Device Information</h2>
+            <div class="info-grid">
+                <div class="info-item">
+                    <div class="info-label">Platform</div>
+                    <div class="info-value" id="platform">-</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Screen Resolution</div>
+                    <div class="info-value" id="resolution">-</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Browser</div>
+                    <div class="info-value" id="browser">-</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Camera Support</div>
+                    <div class="info-value" id="camera-support">-</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">GPS Support</div>
+                    <div class="info-value" id="gps-support">-</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Camera Test -->
+        <div class="test-section">
+            <h2>Camera Test</h2>
+            
+            <div id="video-container" class="hidden">
+                <video id="video" autoplay playsinline muted></video>
+                <div class="overlay"></div>
+                <div class="corner tl"></div>
+                <div class="corner tr"></div>
+                <div class="corner bl"></div>
+                <div class="corner br"></div>
+                <div class="guide-text">Position meter display in frame</div>
+            </div>
+
+            <button id="start-camera" class="btn-primary">Start Camera</button>
+            <button id="capture" class="btn-success hidden">Capture Photo</button>
+            <button id="stop-camera" class="btn-secondary hidden">Stop Camera</button>
+
+            <div id="results"></div>
+        </div>
+
+        <!-- Quick Checklist -->
+        <div class="test-section">
+            <h2>Quick Test Checklist</h2>
+            <ul class="checklist">
+                <li><input type="checkbox" id="check1"> Camera permission requested</li>
+                <li><input type="checkbox" id="check2"> Back camera activated</li>
+                <li><input type="checkbox" id="check3"> Alignment guide visible</li>
+                <li><input type="checkbox" id="check4"> Photo captured successfully</li>
+                <li><input type="checkbox" id="check5"> Metadata extracted</li>
+                <li><input type="checkbox" id="check6"> GPS data captured</li>
+                <li><input type="checkbox" id="check7"> Camera stopped cleanly</li>
+                <li><input type="checkbox" id="check8"> Touch interactions work</li>
+                <li><input type="checkbox" id="check9"> UI is responsive</li>
+                <li><input type="checkbox" id="check10"> No crashes or errors</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        let stream = null;
+        let captureCount = 0;
+
+        // Detect device info
+        function detectDeviceInfo() {
+            document.getElementById('platform').textContent = navigator.platform;
+            document.getElementById('resolution').textContent = `${window.screen.width}x${window.screen.height}`;
+            
+            const ua = navigator.userAgent;
+            let browser = 'Unknown';
+            if (ua.includes('Chrome')) browser = 'Chrome';
+            else if (ua.includes('Safari')) browser = 'Safari';
+            else if (ua.includes('Firefox')) browser = 'Firefox';
+            else if (ua.includes('Edge')) browser = 'Edge';
+            document.getElementById('browser').textContent = browser;
+
+            const cameraSupport = navigator.mediaDevices && navigator.mediaDevices.getUserMedia;
+            document.getElementById('camera-support').innerHTML = cameraSupport 
+                ? '<span class="status success">✓ Supported</span>' 
+                : '<span class="status error">✗ Not Supported</span>';
+
+            const gpsSupport = 'geolocation' in navigator;
+            document.getElementById('gps-support').innerHTML = gpsSupport 
+                ? '<span class="status success">✓ Supported</span>' 
+                : '<span class="status error">✗ Not Supported</span>';
+        }
+
+        // Start camera
+        async function startCamera() {
+            try {
+                addResult('Requesting camera permission...', 'pending');
+                
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        facingMode: 'environment',
+                        width: { ideal: 1920 },
+                        height: { ideal: 1080 }
+                    }
+                });
+
+                const video = document.getElementById('video');
+                video.srcObject = stream;
+
+                document.getElementById('video-container').classList.remove('hidden');
+                document.getElementById('start-camera').classList.add('hidden');
+                document.getElementById('capture').classList.remove('hidden');
+                document.getElementById('stop-camera').classList.remove('hidden');
+
+                addResult('✓ Camera started successfully', 'success');
+                addResult(`Video dimensions: ${video.videoWidth}x${video.videoHeight}`, 'success');
+            } catch (error) {
+                addResult(`✗ Camera error: ${error.message}`, 'error');
+            }
+        }
+
+        // Stop camera
+        function stopCamera() {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                stream = null;
+            }
+
+            document.getElementById('video-container').classList.add('hidden');
+            document.getElementById('start-camera').classList.remove('hidden');
+            document.getElementById('capture').classList.add('hidden');
+            document.getElementById('stop-camera').classList.add('hidden');
+
+            addResult('✓ Camera stopped', 'success');
+        }
+
+        // Capture photo
+        async function capturePhoto() {
+            const video = document.getElementById('video');
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0);
+
+            // Convert to blob
+            canvas.toBlob(async (blob) => {
+                captureCount++;
+                const file = new File([blob], `meter-${Date.now()}.jpg`, { type: 'image/jpeg' });
+
+                addResult(`✓ Photo captured #${captureCount}`, 'success');
+                addResult(`File: ${file.name} (${(file.size / 1024).toFixed(2)} KB)`, 'success');
+
+                // Get GPS
+                if ('geolocation' in navigator) {
+                    navigator.geolocation.getCurrentPosition(
+                        (position) => {
+                            addResult(`✓ GPS: ${position.coords.latitude.toFixed(6)}, ${position.coords.longitude.toFixed(6)}`, 'success');
+                        },
+                        (error) => {
+                            addResult(`⚠ GPS: ${error.message}`, 'pending');
+                        }
+                    );
+                }
+
+                // Metadata
+                const metadata = {
+                    timestamp: new Date().toISOString(),
+                    device: {
+                        userAgent: navigator.userAgent,
+                        platform: navigator.platform,
+                        screenResolution: `${window.screen.width}x${window.screen.height}`
+                    }
+                };
+
+                addResult(`✓ Metadata: ${JSON.stringify(metadata, null, 2)}`, 'success');
+            }, 'image/jpeg', 0.95);
+        }
+
+        // Add result to UI
+        function addResult(message, type) {
+            const results = document.getElementById('results');
+            const item = document.createElement('div');
+            item.className = 'result-item';
+            
+            let icon = '';
+            if (type === 'success') icon = '✓';
+            else if (type === 'error') icon = '✗';
+            else if (type === 'pending') icon = '⚠';
+            
+            item.textContent = `${icon} ${message}`;
+            results.insertBefore(item, results.firstChild);
+        }
+
+        // Event listeners
+        document.getElementById('start-camera').addEventListener('click', startCamera);
+        document.getElementById('stop-camera').addEventListener('click', stopCamera);
+        document.getElementById('capture').addEventListener('click', capturePhoto);
+
+        // Initialize
+        detectDeviceInfo();
+        addResult('Ready to test. Tap "Start Camera" to begin.', 'pending');
+    </script>
+</body>
+</html>
