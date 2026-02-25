@@ -1,0 +1,195 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 216 33% 97%;
+    --foreground: 213 72% 14%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 213 72% 14%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 213 72% 14%;
+
+    --primary: 213 72% 14%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 216 20% 95%;
+    --secondary-foreground: 213 72% 14%;
+
+    --muted: 216 20% 93%;
+    --muted-foreground: 215 14% 45%;
+
+    --accent: 217 100% 50%;
+    --accent-foreground: 0 0% 100%;
+
+    --success: 160 84% 39%;
+    --success-foreground: 0 0% 100%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+
+    --border: 216 20% 91%;
+    --input: 216 20% 91%;
+    --ring: 217 100% 50%;
+
+    --radius: 1rem;
+
+    --sidebar-background: 0 0% 98%;
+    --sidebar-foreground: 240 5.3% 26.1%;
+    --sidebar-primary: 240 5.9% 10%;
+    --sidebar-primary-foreground: 0 0% 98%;
+    --sidebar-accent: 240 4.8% 95.9%;
+    --sidebar-accent-foreground: 240 5.9% 10%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+
+    --glass-bg: 0 0% 100% / 0.7;
+    --glass-border: 0 0% 100% / 0.3;
+    --glow-blue: 217 100% 50%;
+    --gradient-navy: linear-gradient(135deg, hsl(213 72% 14%), hsl(217 60% 25%));
+    --gradient-accent: linear-gradient(135deg, hsl(217 100% 50%), hsl(200 100% 50%));
+    --shadow-card: 0 2px 16px -4px hsl(213 72% 14% / 0.08);
+    --shadow-elevated: 0 8px 32px -8px hsl(213 72% 14% / 0.12);
+  }
+
+  .dark {
+    --background: 213 72% 6%;
+    --foreground: 216 20% 95%;
+
+    --card: 213 60% 10%;
+    --card-foreground: 216 20% 95%;
+
+    --popover: 213 60% 10%;
+    --popover-foreground: 216 20% 95%;
+
+    --primary: 217 100% 50%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 213 50% 15%;
+    --secondary-foreground: 216 20% 95%;
+
+    --muted: 213 50% 15%;
+    --muted-foreground: 215 14% 55%;
+
+    --accent: 217 100% 50%;
+    --accent-foreground: 0 0% 100%;
+
+    --border: 213 40% 18%;
+    --input: 213 40% 18%;
+    --ring: 217 100% 50%;
+
+    --glass-bg: 213 60% 10% / 0.7;
+    --glass-border: 213 60% 15% / 0.3;
+    --shadow-card: 0 2px 16px -4px hsl(0 0% 0% / 0.3);
+    --shadow-elevated: 0 8px 32px -8px hsl(0 0% 0% / 0.4);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+}
+
+@layer components {
+  .glass-card {
+    @apply bg-card/80 backdrop-blur-xl border border-white/20 rounded-2xl;
+    box-shadow: var(--shadow-card);
+  }
+
+  .glass-card-elevated {
+    @apply bg-card/90 backdrop-blur-xl border border-white/25 rounded-2xl;
+    box-shadow: var(--shadow-elevated);
+  }
+
+  .gradient-navy {
+    background: var(--gradient-navy);
+  }
+
+  .gradient-accent {
+    background: var(--gradient-accent);
+  }
+
+  .glow-line {
+    @apply h-px w-full;
+    background: linear-gradient(90deg, transparent, hsl(var(--accent)), transparent);
+  }
+
+  .energy-wave {
+    background: linear-gradient(90deg, transparent, hsl(var(--accent) / 0.3), transparent);
+  }
+
+  .tap-scale {
+    @apply transition-transform duration-150 active:scale-95;
+  }
+}
+
+@layer utilities {
+  @keyframes pulse-glow {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+  }
+
+  @keyframes scan-line {
+    0% { transform: translateY(0); }
+    100% { transform: translateY(100%); }
+  }
+
+  @keyframes float-up {
+    0% { opacity: 0; transform: translateY(20px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes wave-flow {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+  }
+
+  @keyframes bridge-pulse {
+    0%, 100% { transform: scaleX(1); opacity: 0.3; }
+    50% { transform: scaleX(1.2); opacity: 0.8; }
+  }
+
+  @keyframes data-flow {
+    0% { transform: translateX(-100%); opacity: 0; }
+    50% { opacity: 1; }
+    100% { transform: translateX(400%); opacity: 0; }
+  }
+
+  .animate-pulse-glow {
+    animation: pulse-glow 2s ease-in-out infinite;
+  }
+
+  .animate-scan-line {
+    animation: scan-line 2s ease-in-out infinite;
+  }
+
+  .animate-float-up {
+    animation: float-up 0.5s ease-out forwards;
+  }
+
+  .animate-wave-flow {
+    animation: wave-flow 3s ease-in-out infinite;
+  }
+
+  .animate-bridge-pulse {
+    animation: bridge-pulse 2s ease-in-out infinite;
+  }
+
+  .animate-data-flow {
+    animation: data-flow 2s ease-in-out infinite;
+  }
+}
