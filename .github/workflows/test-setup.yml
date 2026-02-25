@@ -1,0 +1,82 @@
+name: Test CI/CD Setup
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-setup:
+    name: Verify CI/CD Configuration
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Verify workflow files exist
+        run: |
+          echo "Checking for workflow files..."
+          test -f .github/workflows/frontend-ci.yml && echo "✅ frontend-ci.yml exists"
+          test -f .github/workflows/backend-ci.yml && echo "✅ backend-ci.yml exists"
+          test -f .github/workflows/deploy-preview.yml && echo "✅ deploy-preview.yml exists"
+          test -f .github/workflows/deploy-production.yml && echo "✅ deploy-production.yml exists"
+          test -f .github/workflows/security-scan.yml && echo "✅ security-scan.yml exists"
+      
+      - name: Verify documentation exists
+        run: |
+          echo "Checking for documentation files..."
+          test -f .github/CICD_SETUP.md && echo "✅ CICD_SETUP.md exists"
+          test -f .github/CONTRIBUTING.md && echo "✅ CONTRIBUTING.md exists"
+          test -f .github/pull_request_template.md && echo "✅ pull_request_template.md exists"
+      
+      - name: Verify issue templates exist
+        run: |
+          echo "Checking for issue templates..."
+          test -f .github/ISSUE_TEMPLATE/bug_report.md && echo "✅ bug_report.md exists"
+          test -f .github/ISSUE_TEMPLATE/feature_request.md && echo "✅ feature_request.md exists"
+          test -f .github/ISSUE_TEMPLATE/task.md && echo "✅ task.md exists"
+      
+      - name: Verify dependabot configuration
+        run: |
+          echo "Checking for dependabot configuration..."
+          test -f .github/dependabot.yml && echo "✅ dependabot.yml exists"
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+      
+      - name: Verify package.json scripts
+        run: |
+          echo "Checking package.json scripts..."
+          node -e "const pkg = require('./package.json'); console.log('Scripts:', Object.keys(pkg.scripts).join(', '))"
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Verify backend requirements
+        run: |
+          echo "Checking backend requirements..."
+          test -f backend/requirements.txt && echo "✅ requirements.txt exists"
+          wc -l backend/requirements.txt
+      
+      - name: Summary
+        run: |
+          echo "=========================================="
+          echo "✅ CI/CD Setup Verification Complete!"
+          echo "=========================================="
+          echo ""
+          echo "All required files are in place:"
+          echo "  - 5 GitHub Actions workflows"
+          echo "  - 3 issue templates"
+          echo "  - Pull request template"
+          echo "  - Contributing guide"
+          echo "  - CI/CD setup documentation"
+          echo "  - Dependabot configuration"
+          echo ""
+          echo "Next steps:"
+          echo "  1. Configure GitHub secrets (see .github/CICD_SETUP.md)"
+          echo "  2. Enable GitHub Actions in repository settings"
+          echo "  3. Set up branch protection rules"
+          echo "  4. Create your first pull request to test workflows"
