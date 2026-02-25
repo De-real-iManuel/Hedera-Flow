@@ -1,0 +1,116 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Environment files with secrets
+.env
+.env.local
+.env.production
+backend/.env
+backend/.env.test
+backend/.env.supabase.example
+
+# Documentation and task files
+*_SUMMARY.md
+*_GUIDE.md
+*_INSTRUCTIONS.md
+*_CHECKLIST.md
+*_REFERENCE.md
+*_COMPLETE.md
+*_APPLIED.md
+*_SETUP.md
+*_FIXED.md
+TASK_*.md
+FINAL_*.md
+PITCH_*.md
+SLIDES_*.md
+HEDERA_BOUNTY_SUBMISSION.md
+HEDERA_FLOW_HACKATHON_SUBMISSION.md
+HEDERA_FLOW_ONE_PAGER.md
+SUBMISSION_CHECKLIST.md
+BACKEND_FRONTEND_SYNC.md
+CAMERA_COMPONENT_VERIFICATION.md
+DATABASE_FIXED_RESTART_NEEDED.md
+DESIGN_TOKENS.md
+DOCKER_SETUP.md
+ENV_REFERENCE.md
+ENV_SETUP.md
+FRONTEND_FLOW_AND_DATA_INTEGRATION.md
+FRONTEND_LAYOUT_FIXED.md
+FRONTEND_MIGRATION_COMPLETE.md
+GLOBAL_ARCHITECTURE_COMPLETE.md
+FIX_BROWSER_ERROR.md
+
+# Backend documentation
+backend/*_SUMMARY.md
+backend/*_GUIDE.md
+backend/*_SETUP.md
+backend/*_APPLIED.md
+backend/*_CHECKLIST.md
+backend/TASK_*.md
+backend/ALL_UTILITIES_SUMMARY.md
+backend/API_SCHEMAS.md
+backend/APP_STRUCTURE.md
+backend/AUTHENTICATION_SETUP.md
+backend/AUTH_FIXES_APPLIED.md
+backend/CORS_IMPLEMENTATION.md
+backend/DATABASE.md
+backend/DATABASE_CONNECTION_POOL.md
+backend/DATABASE_FIX_APPLIED.md
+backend/DATABASE_INDEXES.md
+backend/DATABASE_SETUP.md
+backend/EMAIL_VERIFICATION_GUIDE.md
+backend/ENABLE_VISION_API_NOW.md
+backend/ERROR_HANDLING.md
+backend/GOOGLE_CLOUD_CHECKLIST.md
+backend/GOOGLE_CLOUD_QUICKSTART.md
+backend/GOOGLE_CLOUD_SETUP.md
+
+# Test and verification scripts
+backend/debug_*.py
+backend/verify_*.py
+backend/test_*.py
+
+# Docs folder
+docs/
+
+# Kiro specs and tasks
+.kiro/specs/
+
+# Credentials
+backend/credentials/google-vision-key.json
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Backend logs
+backend/*.log
