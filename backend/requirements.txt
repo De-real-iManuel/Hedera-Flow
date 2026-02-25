@@ -21,7 +21,7 @@ python-multipart==0.0.6
 pyjwt==2.8.0
 
 # Hedera SDK
-hedera-sdk-py==2.21.0  # Official Hedera SDK for Python (wrapper around Java SDK)
+hedera-sdk-py==2.50.0  # Official Hedera SDK for Python (wrapper around Java SDK)
 
 # Google Cloud Vision (OCR)
 google-cloud-vision==3.12.1  # Updated for Python 3.14 compatibility
