@@ -1,6 +1,6 @@
 # Hedera Flow - Blockchain-Powered Utility Verification Platform
 
-A decentralized platform for electricity bill verification and payment using Hedera Hashgraph.
+A decentralized AI platform for electricity bill verification and payment using Hedera Hashgraph.
 
 ## 🚀 Quick Start
 
@@ -23,10 +23,10 @@ Backend runs on: http://localhost:8000
 npm install
 npm run dev
 ```
-Frontend runs on: http://localhost:5173
+Frontend runs on: http://localhost:8080
 
 ### Test API Connection
-Visit: http://localhost:5173/api-test
+Visit: http://localhost:8000/api-test
 
 ## 📁 Project Structure
 
@@ -255,4 +255,4 @@ Built with shadcn-ui, includes:
 
 ---
 
-**Built with ❤️ using Hedera Hashgraph**
+**Built by De real iManuel using Hedera Hashgraph**
