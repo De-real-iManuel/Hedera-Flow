@@ -101,6 +101,7 @@ def seed_tariffs():
         }
         
         # India (Tata Power) - Tiered
+        # Updated Feb 2026 based on MERC approved rates
         india_tariff = {
             "country_code": "IN",
             "region": "National",
@@ -113,24 +114,25 @@ def seed_tariffs():
                         "name": "tier1",
                         "min_kwh": 0,
                         "max_kwh": 100,
-                        "price": 4.50
+                        "price": 2.18  # Updated from 4.50 to match 2024 MERC rates
                     },
                     {
                         "name": "tier2",
                         "min_kwh": 101,
                         "max_kwh": 300,
-                        "price": 6.00
+                        "price": 6.97  # Updated from 6.00 to match proposed rates
                     },
                     {
                         "name": "tier3",
                         "min_kwh": 301,
                         "max_kwh": None,
-                        "price": 7.50
+                        "price": 8.40  # Updated from 7.50 to match proposed rates
                     }
                 ]
             },
             "taxes_and_fees": {
-                "vat": 0.18
+                "vat": 0.18,
+                "fixed_monthly_fee": 90  # Added fixed charge per MERC approval
             },
             "subsidies": {},
             "valid_from": date(2024, 1, 1),
@@ -139,6 +141,7 @@ def seed_tariffs():
         }
         
         # Brazil (Regional) - Tiered
+        # Updated Feb 2026 to reflect ICMS cap
         brazil_tariff = {
             "country_code": "BR",
             "region": "National",
@@ -168,7 +171,7 @@ def seed_tariffs():
                 ]
             },
             "taxes_and_fees": {
-                "icms_tax": 0.20
+                "icms_tax": 0.17  # Updated from 0.20 to reflect 2022 ICMS cap (17-18%)
             },
             "subsidies": {},
             "valid_from": date(2024, 1, 1),

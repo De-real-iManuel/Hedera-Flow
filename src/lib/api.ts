@@ -11,6 +11,7 @@ import type {
   Payment,
   PaymentReceipt,
   UtilityProvider,
+  ExchangeRate,
 } from '@/types/api';
 
 // Auth API
@@ -33,7 +34,23 @@ export const authApi = {
     return response.data;
   },
 
+  walletConnect: async (data: {
+    hedera_account_id: string;
+    signature: string;
+    message: string;
+  }): Promise<AuthResponse> => {
+    const response = await apiClient.post<AuthResponse>('/auth/wallet-connect', data);
+    return response.data;
+  },
+
   getCurrentUser: async (): Promise<User> => {
+    // Check if user is stored in localStorage (temporary until JWT middleware is integrated)
+    const storedUser = localStorage.getItem('user');
+    if (storedUser) {
+      return JSON.parse(storedUser);
+    }
+    
+    // If no stored user, try to fetch from backend (will fail until JWT middleware is integrated)
     const response = await apiClient.get<User>('/auth/me');
     return response.data;
   },
@@ -92,21 +109,45 @@ export const billsApi = {
 
 // Payments API
 export const paymentsApi = {
-  prepare: async (billId: string): Promise<{ payment_id: string; amount: number }> => {
+  prepare: async (billId: string): Promise<{
+    bill: {
+      id: string;
+      total_fiat: number;
+      currency: string;
+      consumption_kwh: number;
+    };
+    transaction: {
+      from: string;
+      to: string;
+      amount_hbar: number;
+      memo: string;
+    };
+    exchange_rate: {
+      currency: string;
+      hbar_price: number;
+      source: string;
+      fetched_at: string;
+      expires_at: string;
+    };
+    minimum_hbar: number;
+  }> => {
     const response = await apiClient.post(`/payments/prepare`, { bill_id: billId });
     return response.data;
   },
 
-  confirm: async (paymentId: string, transactionId: string): Promise<Payment> => {
-    const response = await apiClient.post<Payment>(`/payments/confirm`, {
-      payment_id: paymentId,
-      hedera_transaction_id: transactionId,
+  confirm: async (billId: string, hederaTxId: string): Promise<{
+    payment: PaymentReceipt;
+    message: string;
+  }> => {
+    const response = await apiClient.post(`/payments/confirm`, {
+      bill_id: billId,
+      hedera_tx_id: hederaTxId,
     });
     return response.data;
   },
 
-  get: async (paymentId: string): Promise<Payment> => {
-    const response = await apiClient.get<Payment>(`/payments/${paymentId}`);
+  get: async (paymentId: string): Promise<PaymentReceipt> => {
+    const response = await apiClient.get<PaymentReceipt>(`/payments/${paymentId}`);
     return response.data;
   },
 
@@ -115,8 +156,8 @@ export const paymentsApi = {
     return response.data;
   },
 
-  list: async (): Promise<Payment[]> => {
-    const response = await apiClient.get<Payment[]>('/payments');
+  list: async (): Promise<PaymentReceipt[]> => {
+    const response = await apiClient.get<PaymentReceipt[]>('/payments');
     return response.data;
   },
 };
@@ -157,6 +198,99 @@ export const verificationApi = {
 export const healthApi = {
   check: async (): Promise<{ status: string; timestamp: string }> => {
     const response = await apiClient.get('/health');
+    return response.data;
+  },
+};
+
+// Exchange Rate API
+export const exchangeRateApi = {
+  get: async (currency: string): Promise<ExchangeRate> => {
+    const response = await apiClient.get<ExchangeRate>(`/exchange-rate/${currency.toUpperCase()}`);
+    return response.data;
+  },
+};
+
+// User Profile API
+export interface NotificationPreferences {
+  bill_reminders: boolean;
+  payment_confirmations: boolean;
+  subsidy_updates: boolean;
+  email_notifications: boolean;
+  push_notifications: boolean;
+}
+
+export interface UserPreferences {
+  theme: string;
+  language: string;
+  currency_display: string;
+  notifications: NotificationPreferences;
+}
+
+export interface SecuritySettings {
+  biometric_enabled: boolean;
+  pin_enabled: boolean;
+  two_factor_enabled: boolean;
+}
+
+export interface UserProfile {
+  id: string;
+  email: string;
+  first_name?: string;
+  last_name?: string;
+  country_code: string;
+  hedera_account_id?: string;
+  wallet_type?: string;
+  created_at: string;
+  last_login?: string;
+  is_active: boolean;
+  preferences: UserPreferences;
+  security: SecuritySettings;
+}
+
+export interface UpdateProfileRequest {
+  first_name?: string;
+  last_name?: string;
+  email?: string;
+}
+
+export const userApi = {
+  getProfile: async (): Promise<UserProfile> => {
+    const response = await apiClient.get<UserProfile>('/user/profile');
+    return response.data;
+  },
+
+  updateProfile: async (data: UpdateProfileRequest): Promise<UserProfile> => {
+    const response = await apiClient.put<UserProfile>('/user/profile', data);
+    return response.data;
+  },
+
+  getPreferences: async (): Promise<UserPreferences> => {
+    const response = await apiClient.get<UserPreferences>('/user/preferences');
+    return response.data;
+  },
+
+  updatePreferences: async (preferences: UserPreferences): Promise<UserPreferences> => {
+    const response = await apiClient.put<UserPreferences>('/user/preferences', preferences);
+    return response.data;
+  },
+
+  getNotifications: async (): Promise<NotificationPreferences> => {
+    const response = await apiClient.get<NotificationPreferences>('/user/notifications');
+    return response.data;
+  },
+
+  updateNotifications: async (notifications: NotificationPreferences): Promise<NotificationPreferences> => {
+    const response = await apiClient.put<NotificationPreferences>('/user/notifications', notifications);
+    return response.data;
+  },
+
+  getSecurity: async (): Promise<SecuritySettings> => {
+    const response = await apiClient.get<SecuritySettings>('/user/security');
+    return response.data;
+  },
+
+  updateSecurity: async (security: SecuritySettings): Promise<SecuritySettings> => {
+    const response = await apiClient.put<SecuritySettings>('/user/security', security);
     return response.data;
   },
 };

@@ -4,6 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     
+    <!-- Content Security Policy - Allow HashConnect and external resources -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://*.hedera.com https://*.hashpack.app wss://*.hashpack.app https://api.coingecko.com https://pro-api.coinmarketcap.com http://localhost:8000;">
+    
     <title>Hedera Flow</title>
     <meta name="description" content="Your Utility Payment Rail on Hedera" />
     <meta name="author" content="Emmanuel Okechukwu Nwajari (De real iManuel)" />

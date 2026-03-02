@@ -34,7 +34,8 @@ def calculate_bill_with_tariff_fetch(
     band_classification: Optional[str] = None,
     hourly_consumption: Optional[Dict[int, float]] = None,
     include_platform_fee: bool = True,
-    use_cache: bool = True
+    use_cache: bool = True,
+    user_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Calculate electricity bill by fetching tariff from database/cache.
@@ -50,6 +51,7 @@ def calculate_bill_with_tariff_fetch(
         hourly_consumption: Hourly consumption breakdown for time-of-use (optional for ES)
         include_platform_fee: Whether to include 3% platform service charge (default: True)
         use_cache: Whether to use Redis cache for tariff (default: True)
+        user_id: User UUID for subsidy eligibility check (optional)
     
     Returns:
         Dictionary containing bill calculation results (same as calculate_bill)
@@ -67,6 +69,17 @@ def calculate_bill_with_tariff_fetch(
             use_cache=use_cache
         )
         
+        # Check user subsidy eligibility if user_id provided
+        user_eligible = False
+        if user_id:
+            from app.services.subsidy_service import check_user_eligibility
+            try:
+                eligibility = check_user_eligibility(db, user_id)
+                user_eligible = eligibility.get('eligible', False)
+            except Exception as e:
+                logger.warning(f"Failed to check subsidy eligibility for user {user_id}: {e}")
+                user_eligible = False
+        
         # Calculate bill using fetched tariff
         return calculate_bill(
             consumption_kwh=consumption_kwh,
@@ -75,7 +88,8 @@ def calculate_bill_with_tariff_fetch(
             tariff_data=tariff_data,
             band_classification=band_classification,
             hourly_consumption=hourly_consumption,
-            include_platform_fee=include_platform_fee
+            include_platform_fee=include_platform_fee,
+            user_eligible=user_eligible
         )
         
     except TariffNotFoundError:
@@ -94,7 +108,8 @@ def calculate_bill(
     tariff_data: Dict[str, Any],
     band_classification: Optional[str] = None,
     hourly_consumption: Optional[Dict[int, float]] = None,
-    include_platform_fee: bool = True
+    include_platform_fee: bool = True,
+    user_eligible: bool = False
 ) -> Dict[str, Any]:
     """
     Calculate electricity bill based on regional tariff structure.
@@ -107,6 +122,7 @@ def calculate_bill(
         band_classification: Nigeria band classification (A, B, C, D, E) - required for NG
         hourly_consumption: Hourly consumption breakdown for time-of-use (optional for ES)
         include_platform_fee: Whether to include 3% platform service charge (default: True)
+        user_eligible: Whether user is eligible for subsidies (default: False)
     
     Returns:
         Dictionary containing:
@@ -172,7 +188,12 @@ def calculate_bill(
         utility_taxes = _calculate_taxes_and_fees(base_charge, taxes_and_fees, breakdown)
         
         # Calculate subsidies (if any)
-        subsidies_total = _calculate_subsidies(base_charge, subsidies)
+        subsidies_total = _calculate_subsidies(
+            base_charge=base_charge,
+            subsidies=subsidies,
+            consumption_kwh=consumption_kwh,
+            user_eligible=user_eligible
+        )
         
         # Calculate subtotal (base + utility taxes - subsidies)
         subtotal = Decimal(str(base_charge)) + Decimal(str(utility_taxes)) - Decimal(str(subsidies_total))
@@ -527,16 +548,79 @@ def _calculate_taxes_and_fees(
 
 def _calculate_subsidies(
     base_charge: float,
-    subsidies: Dict[str, Any]
+    subsidies: Dict[str, Any],
+    consumption_kwh: float = 0,
+    user_eligible: bool = True
 ) -> float:
     """
     Calculate total subsidies (if any).
     
-    Subsidies reduce the final bill amount.
+    Subsidies reduce the final bill amount. Supports:
+    - Percentage-based subsidies (e.g., 25% discount)
+    - Fixed-amount subsidies (e.g., €10 off)
+    - Consumption-based subsidies (e.g., €0.05 per kWh)
+    
+    Args:
+        base_charge: Base electricity charge before subsidies
+        subsidies: Subsidy configuration from tariff data
+        consumption_kwh: Total consumption in kWh (for consumption-based subsidies)
+        user_eligible: Whether user is eligible for subsidies (default: True)
+    
+    Returns:
+        Total subsidy amount to deduct from bill
+    
+    Examples:
+        >>> # Percentage subsidy (25% off)
+        >>> subsidies = [{"type": "percentage", "value": 0.25, "name": "Low Income Discount"}]
+        >>> _calculate_subsidies(100.0, subsidies)
+        25.0
+        
+        >>> # Fixed amount subsidy (€10 off)
+        >>> subsidies = [{"type": "fixed", "value": 10.0, "name": "Senior Citizen Discount"}]
+        >>> _calculate_subsidies(100.0, subsidies)
+        10.0
+        
+        >>> # Consumption-based subsidy (€0.05 per kWh)
+        >>> subsidies = [{"type": "per_kwh", "value": 0.05, "name": "Energy Efficiency Rebate"}]
+        >>> _calculate_subsidies(100.0, subsidies, consumption_kwh=200)
+        10.0
     """
-    # For MVP, subsidies are not implemented
-    # This is a placeholder for future enhancement
-    return 0.0
+    # If user not eligible or no subsidies configured, return 0
+    if not user_eligible or not subsidies:
+        return 0.0
+    
+    # Handle both list and dict formats
+    subsidy_list = subsidies if isinstance(subsidies, list) else subsidies.get('items', [])
+    
+    if not subsidy_list:
+        return 0.0
+    
+    total_subsidy = 0.0
+    
+    for subsidy in subsidy_list:
+        subsidy_type = subsidy.get('type', '').lower()
+        subsidy_value = subsidy.get('value', 0)
+        
+        # Skip if no value
+        if not subsidy_value:
+            continue
+        
+        # Calculate based on subsidy type
+        if subsidy_type == 'percentage':
+            # Percentage of base charge (e.g., 25% = 0.25)
+            total_subsidy += base_charge * subsidy_value
+            
+        elif subsidy_type == 'fixed':
+            # Fixed amount (e.g., €10)
+            total_subsidy += subsidy_value
+            
+        elif subsidy_type == 'per_kwh':
+            # Per kWh amount (e.g., €0.05 per kWh)
+            if consumption_kwh > 0:
+                total_subsidy += consumption_kwh * subsidy_value
+    
+    # Ensure subsidy doesn't exceed base charge (can't be negative bill)
+    return min(total_subsidy, base_charge)
 
 
 def _get_total_consumption_from_breakdown(breakdown: Dict[str, Any]) -> float:

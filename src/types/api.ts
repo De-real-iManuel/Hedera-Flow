@@ -2,6 +2,8 @@
 
 export interface User {
   id: string;
+  first_name?: string | null;
+  last_name?: string | null;
   email: string;
   country_code: string;
   hedera_account_id: string | null;
@@ -22,6 +24,8 @@ export interface LoginRequest {
 }
 
 export interface RegisterRequest {
+  first_name: string;
+  last_name: string;
   email: string;
   password: string;
   country_code: string;
@@ -97,9 +101,16 @@ export interface Payment {
 }
 
 export interface PaymentReceipt {
-  payment: Payment;
-  bill: Bill;
-  reference_number: string;
+  id: string;
+  bill_id: string;
+  amount_hbar: number;
+  amount_fiat: number;
+  currency: string;
+  exchange_rate: number;
+  hedera_tx_id: string;
+  consensus_timestamp: string;
+  receipt_url: string;
+  created_at: string;
 }
 
 export interface UtilityProvider {
@@ -108,6 +119,13 @@ export interface UtilityProvider {
   country_code: string;
   state_province: string;
   is_active: boolean;
+}
+
+export interface ExchangeRate {
+  currency: string;
+  hbarPrice: number;
+  source: string;
+  fetchedAt: string;
 }
 
 export interface ApiError {

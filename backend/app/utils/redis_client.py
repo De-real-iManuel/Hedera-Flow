@@ -239,6 +239,226 @@ class RedisClient:
             return False
 
     
+    # ==================== RATE LOCK (Payment Protection) ====================
+    
+    def set_rate_lock(self, bill_id: str, rate_data: Dict[str, Any]) -> bool:
+        """
+        Create a 5-minute rate lock for a payment preparation.
+        
+        This protects users from exchange rate volatility during the payment flow.
+        The locked rate is valid for 5 minutes, after which the user must re-prepare.
+        
+        Key: rate_lock:{bill_id}
+        TTL: 5 minutes (300 seconds)
+        
+        Requirements:
+            - FR-6.13: System shall handle exchange rate volatility with 2% buffer
+            - FR-17.4: Set 5-minute rate lock to protect against volatility
+            - US-7: Show exchange rate, timestamp, and 5-minute expiry
+        
+        Args:
+            bill_id: Bill UUID
+            rate_data: {
+                bill_id: str,
+                currency: str,
+                hbar_price: float,
+                amount_hbar: float,
+                fiat_amount: float,
+                buffer_applied: bool,
+                buffer_percentage: float,
+                locked_at: timestamp (ISO format),
+                expires_at: timestamp (ISO format),
+                source: str
+            }
+        
+        Returns:
+            True if rate lock created successfully, False otherwise
+        
+        Example:
+            >>> redis_client.set_rate_lock('abc-123', {
+            ...     'bill_id': 'abc-123',
+            ...     'currency': 'EUR',
+            ...     'hbar_price': 0.36,
+            ...     'amount_hbar': 251.17,
+            ...     'fiat_amount': 85.40,
+            ...     'buffer_applied': True,
+            ...     'buffer_percentage': 2.0,
+            ...     'locked_at': '2026-03-02T10:00:00Z',
+            ...     'expires_at': '2026-03-02T10:05:00Z',
+            ...     'source': 'coingecko'
+            ... })
+        """
+        try:
+            key = f"rate_lock:{bill_id}"
+            value = json.dumps(rate_data)
+            ttl = timedelta(minutes=5)  # 5-minute lock
+            result = self.client.setex(key, ttl, value)
+            
+            if result:
+                print(f"✅ Rate lock created for bill {bill_id}: {rate_data['amount_hbar']} HBAR @ {rate_data['hbar_price']} {rate_data['currency']}/HBAR (expires in 5 min)")
+            
+            return result
+        except Exception as e:
+            print(f"Error setting rate lock: {e}")
+            return False
+    
+    def get_rate_lock(self, bill_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Retrieve rate lock data for a bill.
+        
+        Args:
+            bill_id: Bill UUID
+            
+        Returns:
+            Rate lock data dict or None if not found/expired
+            
+        Example:
+            >>> lock = redis_client.get_rate_lock('abc-123')
+            >>> if lock:
+            ...     print(f"Locked rate: {lock['hbar_price']} {lock['currency']}/HBAR")
+            ...     print(f"Expires at: {lock['expires_at']}")
+        """
+        try:
+            key = f"rate_lock:{bill_id}"
+            value = self.client.get(key)
+            if value:
+                return json.loads(value)
+            return None
+        except Exception as e:
+            print(f"Error getting rate lock: {e}")
+            return None
+    
+    def delete_rate_lock(self, bill_id: str) -> bool:
+        """
+        Delete rate lock (after payment confirmed or cancelled).
+        
+        Args:
+            bill_id: Bill UUID
+            
+        Returns:
+            True if deleted, False otherwise
+        """
+        try:
+            key = f"rate_lock:{bill_id}"
+            result = bool(self.client.delete(key))
+            if result:
+                print(f"✅ Rate lock deleted for bill {bill_id}")
+            return result
+        except Exception as e:
+            print(f"Error deleting rate lock: {e}")
+            return False
+    
+    def get_rate_lock_ttl(self, bill_id: str) -> int:
+        """
+        Get remaining time-to-live for a rate lock.
+        
+        Args:
+            bill_id: Bill UUID
+            
+        Returns:
+            TTL in seconds, -1 if no expiry, -2 if key doesn't exist
+            
+        Example:
+            >>> ttl = redis_client.get_rate_lock_ttl('abc-123')
+            >>> if ttl > 0:
+            ...     print(f"Rate lock expires in {ttl} seconds")
+        """
+        try:
+            key = f"rate_lock:{bill_id}"
+            return self.client.ttl(key)
+        except Exception as e:
+            print(f"Error getting rate lock TTL: {e}")
+            return -2
+    
+    def validate_rate_lock(self, bill_id: str, tolerance_percent: float = 5.0) -> Dict[str, Any]:
+        """
+        Validate that a rate lock exists and is still valid.
+        
+        This method checks:
+        1. Rate lock exists
+        2. Rate lock has not expired
+        3. Optionally validates amount is within tolerance
+        
+        Args:
+            bill_id: Bill UUID
+            tolerance_percent: Allowed deviation percentage (default: 5%)
+            
+        Returns:
+            Dictionary with validation result:
+            {
+                'valid': bool,
+                'reason': str,  # If invalid
+                'rate_lock': dict,  # If valid
+                'ttl_seconds': int  # Remaining time
+            }
+            
+        Example:
+            >>> result = redis_client.validate_rate_lock('abc-123')
+            >>> if result['valid']:
+            ...     print(f"Rate lock valid, {result['ttl_seconds']}s remaining")
+            ... else:
+            ...     print(f"Rate lock invalid: {result['reason']}")
+        """
+        try:
+            # Check if rate lock exists
+            rate_lock = self.get_rate_lock(bill_id)
+            if not rate_lock:
+                return {
+                    'valid': False,
+                    'reason': 'Rate lock not found or expired. Please re-prepare payment.',
+                    'rate_lock': None,
+                    'ttl_seconds': 0
+                }
+            
+            # Get TTL
+            ttl = self.get_rate_lock_ttl(bill_id)
+            if ttl <= 0:
+                return {
+                    'valid': False,
+                    'reason': 'Rate lock has expired. Please re-prepare payment.',
+                    'rate_lock': None,
+                    'ttl_seconds': 0
+                }
+            
+            # Check expiry timestamp
+            expires_at_str = rate_lock.get('expires_at')
+            if expires_at_str:
+                # Handle both 'Z' suffix and '+00:00' suffix
+                # Remove 'Z' if present, fromisoformat will handle '+00:00'
+                if expires_at_str.endswith('Z'):
+                    expires_at_str = expires_at_str[:-1]
+                    if not expires_at_str.endswith('+00:00'):
+                        expires_at_str += '+00:00'
+                
+                expires_at = datetime.fromisoformat(expires_at_str)
+                now = datetime.now(timezone.utc)
+                
+                if now > expires_at:
+                    return {
+                        'valid': False,
+                        'reason': 'Rate lock has expired. Please re-prepare payment.',
+                        'rate_lock': None,
+                        'ttl_seconds': 0
+                    }
+            
+            # Rate lock is valid
+            return {
+                'valid': True,
+                'reason': None,
+                'rate_lock': rate_lock,
+                'ttl_seconds': ttl
+            }
+            
+        except Exception as e:
+            print(f"Error validating rate lock: {e}")
+            return {
+                'valid': False,
+                'reason': f'Rate lock validation error: {str(e)}',
+                'rate_lock': None,
+                'ttl_seconds': 0
+            }
+
+    
     # ==================== RATE LIMITING ====================
     
     def increment_rate_limit(self, ip_address: str) -> int:

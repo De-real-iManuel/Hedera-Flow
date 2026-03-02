@@ -188,3 +188,44 @@ async def get_current_user_optional(
     except HTTPException:
         # If authentication fails, return None instead of raising exception
         return None
+
+
+async def get_current_admin_user(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+) -> User:
+    """
+    Verify that the current user has admin privileges
+    
+    This dependency can be used to protect admin-only routes.
+    For MVP, we check if the user's email is in the admin list.
+    In production, this would check a proper role/permission system.
+    
+    Args:
+        current_user: Current authenticated user
+        db: Database session
+        
+    Returns:
+        User: Authenticated admin user object
+        
+    Raises:
+        HTTPException 403: If user is not an admin
+        
+    Example usage:
+        @router.post("/admin/action")
+        async def admin_action(current_admin: User = Depends(get_current_admin_user)):
+            return {"message": "Admin action performed"}
+    """
+    # For MVP, check if user email is in admin list
+    # In production, this would check a proper role/permission system
+    admin_emails = settings.ADMIN_EMAILS.split(',') if hasattr(settings, 'ADMIN_EMAILS') else []
+    
+    if current_user.email not in admin_emails:
+        logger.warning(f"Authorization failed: User {current_user.email} is not an admin")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin privileges required"
+        )
+    
+    logger.info(f"Admin user authenticated: {current_user.email}")
+    return current_user

@@ -5,6 +5,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 import logo from "@/assets/hedera-flow-logo.png";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import WalletConnect from "@/components/WalletConnect";
 
 const countries = [
   { code: "ES", name: "Spain", flag: "🇪🇸" },
@@ -16,6 +17,8 @@ const countries = [
 
 const AuthPage = () => {
   const [mode, setMode] = useState<"login" | "signup">("login");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [countryCode, setCountryCode] = useState("");
@@ -33,6 +36,11 @@ const AuthPage = () => {
     }
 
     if (mode === "signup") {
+      if (!firstName || !lastName) {
+        toast.error("Please enter your full name");
+        return;
+      }
+      
       if (!countryCode) {
         toast.error("Please select your country");
         return;
@@ -40,6 +48,8 @@ const AuthPage = () => {
 
       register(
         {
+          first_name: firstName,
+          last_name: lastName,
           email,
           password,
           country_code: countryCode,
@@ -117,34 +127,67 @@ const AuthPage = () => {
         <form onSubmit={handleAuth} className="space-y-4">
           <AnimatePresence mode="wait">
             {mode === "signup" && (
-              <motion.div
-                key="country"
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: "auto" }}
-                exit={{ opacity: 0, height: 0 }}
-                transition={{ duration: 0.2 }}
-              >
-                <div className="glass-card px-4 py-3">
-                  <Select value={countryCode} onValueChange={setCountryCode} required={mode === "signup"}>
-                    <SelectTrigger className="border-0 bg-transparent p-0 h-auto focus:ring-0">
-                      <div className="flex items-center gap-3">
-                        <MapPin className="w-5 h-5 text-muted-foreground shrink-0" />
-                        <SelectValue placeholder="Select Country" />
-                      </div>
-                    </SelectTrigger>
-                    <SelectContent>
-                      {countries.map((country) => (
-                        <SelectItem key={country.code} value={country.code}>
-                          <span className="flex items-center gap-2">
-                            <span className="text-lg">{country.flag}</span>
-                            <span>{country.name}</span>
-                          </span>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </motion.div>
+              <>
+                <motion.div
+                  key="names"
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="space-y-4"
+                >
+                  <div className="glass-card flex items-center gap-3 px-4 py-3">
+                    <input
+                      type="text"
+                      placeholder="First Name"
+                      value={firstName}
+                      onChange={(e) => setFirstName(e.target.value)}
+                      className="flex-1 bg-transparent text-foreground placeholder:text-muted-foreground outline-none text-base"
+                      required={mode === "signup"}
+                    />
+                  </div>
+                  
+                  <div className="glass-card flex items-center gap-3 px-4 py-3">
+                    <input
+                      type="text"
+                      placeholder="Last Name"
+                      value={lastName}
+                      onChange={(e) => setLastName(e.target.value)}
+                      className="flex-1 bg-transparent text-foreground placeholder:text-muted-foreground outline-none text-base"
+                      required={mode === "signup"}
+                    />
+                  </div>
+                </motion.div>
+                
+                <motion.div
+                  key="country"
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.2 }}
+                >
+                  <div className="glass-card px-4 py-3">
+                    <Select value={countryCode} onValueChange={setCountryCode} required={mode === "signup"}>
+                      <SelectTrigger className="border-0 bg-transparent p-0 h-auto focus:ring-0">
+                        <div className="flex items-center gap-3">
+                          <MapPin className="w-5 h-5 text-muted-foreground shrink-0" />
+                          <SelectValue placeholder="Select Country" />
+                        </div>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {countries.map((country) => (
+                          <SelectItem key={country.code} value={country.code}>
+                            <span className="flex items-center gap-2">
+                              <span className="text-lg">{country.flag}</span>
+                              <span>{country.name}</span>
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </motion.div>
+              </>
             )}
           </AnimatePresence>
 
@@ -195,6 +238,16 @@ const AuthPage = () => {
             )}
           </button>
         </form>
+
+        {/* Divider */}
+        <div className="flex items-center gap-4 my-6">
+          <div className="flex-1 h-px bg-border" />
+          <span className="text-sm text-muted-foreground">or continue with</span>
+          <div className="flex-1 h-px bg-border" />
+        </div>
+
+        {/* Wallet Connect Options */}
+        <WalletConnect />
 
         {/* Toggle mode */}
         <p className="text-center text-sm text-muted-foreground mt-8">

@@ -17,11 +17,14 @@ from app.core.dependencies import get_current_user
 from app.schemas.verifications import (
     VerificationResponse,
     VerificationStatus,
-    OCREngine
+    OCREngine,
+    BillSummary
 )
 from app.services.ocr_service import get_ocr_service
 from app.services.fraud_detection_service import get_fraud_detection_service
 from app.services.ipfs_service import get_ipfs_service
+from app.services.billing_service import calculate_bill_with_tariff_fetch, BillingCalculationError
+from app.services.exchange_rate_service import get_hbar_price
 from app.utils.hedera_client import hedera_client
 from config import settings
 
@@ -376,7 +379,132 @@ async def create_verification(
         
         logger.info(f"Verification saved to database: {verification_id}")
         
-        # Step 11: Build response
+        # Step 11: Trigger billing calculation (if consumption available)
+        bill_id = None
+        bill_data = None
+        
+        if consumption_kwh and consumption_kwh > 0:
+            try:
+                logger.info(f"Triggering billing calculation for {consumption_kwh} kWh")
+                
+                # Get user's country and utility provider info
+                user_query = text("""
+                    SELECT u.country_code, m.utility_provider, m.band_classification, m.state_province
+                    FROM users u
+                    JOIN meters m ON m.id = :meter_id
+                    WHERE u.id = :user_id
+                """)
+                
+                user_info = db.execute(
+                    user_query,
+                    {"meter_id": meter_id, "user_id": current_user['user_id']}
+                ).fetchone()
+                
+                if not user_info:
+                    logger.warning("Could not fetch user/meter info for billing calculation")
+                else:
+                    country_code = user_info[0]
+                    utility_provider = user_info[1]
+                    band_classification = user_info[2]
+                    state_province = user_info[3]
+                    
+                    # Calculate bill using billing service
+                    bill_result = calculate_bill_with_tariff_fetch(
+                        db=db,
+                        consumption_kwh=float(consumption_kwh),
+                        country_code=country_code,
+                        utility_provider=utility_provider,
+                        band_classification=band_classification,
+                        include_platform_fee=True,
+                        use_cache=True,
+                        user_id=current_user['user_id']
+                    )
+                    
+                    logger.info(f"Bill calculated: {bill_result['total_fiat']} {bill_result['currency']}")
+                    
+                    # Get HBAR exchange rate
+                    try:
+                        hbar_price = get_hbar_price(db, bill_result['currency'], use_cache=True)
+                        amount_hbar = Decimal(str(bill_result['total_fiat'])) / Decimal(str(hbar_price))
+                        exchange_rate = Decimal(str(hbar_price))
+                        exchange_rate_timestamp = datetime.now(datetime.UTC)
+                        
+                        logger.info(f"HBAR conversion: {amount_hbar} HBAR at rate {exchange_rate} {bill_result['currency']}/HBAR")
+                    except Exception as e:
+                        logger.warning(f"Failed to get HBAR exchange rate: {e}")
+                        amount_hbar = None
+                        exchange_rate = None
+                        exchange_rate_timestamp = None
+                    
+                    # Get tariff_id from tariff_data if available
+                    tariff_id = bill_result.get('tariff_id')
+                    
+                    # Create bill record
+                    bill_id = uuid.uuid4()
+                    
+                    insert_bill_query = text("""
+                        INSERT INTO bills (
+                            id, user_id, meter_id, verification_id,
+                            consumption_kwh, base_charge, taxes, subsidies, total_fiat, currency,
+                            tariff_id, tariff_snapshot,
+                            amount_hbar, exchange_rate, exchange_rate_timestamp,
+                            status, created_at
+                        ) VALUES (
+                            :id, :user_id, :meter_id, :verification_id,
+                            :consumption_kwh, :base_charge, :taxes, :subsidies, :total_fiat, :currency,
+                            :tariff_id, :tariff_snapshot,
+                            :amount_hbar, :exchange_rate, :exchange_rate_timestamp,
+                            :status, :created_at
+                        )
+                        RETURNING id, total_fiat, currency, amount_hbar, exchange_rate
+                    """)
+                    
+                    bill_insert_result = db.execute(
+                        insert_bill_query,
+                        {
+                            'id': bill_id,
+                            'user_id': uuid.UUID(current_user['user_id']),
+                            'meter_id': uuid.UUID(meter_id),
+                            'verification_id': verification_id,
+                            'consumption_kwh': bill_result['consumption_kwh'],
+                            'base_charge': bill_result['base_charge'],
+                            'taxes': bill_result['utility_taxes'],
+                            'subsidies': bill_result['subsidies'],
+                            'total_fiat': bill_result['total_fiat'],
+                            'currency': bill_result['currency'],
+                            'tariff_id': uuid.UUID(tariff_id) if tariff_id else None,
+                            'tariff_snapshot': json.dumps(bill_result.get('breakdown', {})),
+                            'amount_hbar': amount_hbar,
+                            'exchange_rate': exchange_rate,
+                            'exchange_rate_timestamp': exchange_rate_timestamp,
+                            'status': 'pending',
+                            'created_at': datetime.now(datetime.UTC)
+                        }
+                    )
+                    
+                    db.commit()
+                    
+                    bill_row = bill_insert_result.fetchone()
+                    bill_data = {
+                        'id': str(bill_row[0]),
+                        'total_fiat': float(bill_row[1]),
+                        'currency': bill_row[2],
+                        'amount_hbar': float(bill_row[3]) if bill_row[3] else None,
+                        'exchange_rate': float(bill_row[4]) if bill_row[4] else None
+                    }
+                    
+                    logger.info(f"Bill created: {bill_id} - {bill_data['total_fiat']} {bill_data['currency']}")
+                    
+            except BillingCalculationError as e:
+                logger.error(f"Billing calculation failed (non-critical): {e}")
+                # Don't fail verification if billing fails
+            except Exception as e:
+                logger.error(f"Unexpected error during billing calculation: {e}", exc_info=True)
+                # Don't fail verification if billing fails
+        else:
+            logger.info("Skipping billing calculation - no consumption data available (first reading)")
+        
+        # Step 12: Build response
         response = VerificationResponse(
             id=str(verification_row[0]),
             user_id=str(verification_row[1]),
@@ -396,7 +524,8 @@ async def create_verification(
             hcs_topic_id=verification_row[15] or "",
             hcs_sequence_number=verification_row[16] or 0,
             hcs_timestamp=verification_row[17],
-            created_at=verification_row[18]
+            created_at=verification_row[18],
+            bill=BillSummary(**bill_data) if bill_data else None
         )
         
         logger.info(f"Verification complete: {verification_id} - Status: {verification_status}")

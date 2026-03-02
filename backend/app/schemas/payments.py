@@ -4,16 +4,21 @@ Pydantic models for payment-related API requests and responses
 """
 
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, Literal
 from datetime import datetime
 from decimal import Decimal
 from .bills import Currency
+
+# Type definitions
+PaymentMethod = Literal["hbar", "usdc_hedera", "usdc_ethereum"]
+PaymentNetwork = Literal["hedera", "ethereum"]
 
 
 # Request Schemas
 class PaymentPrepareRequest(BaseModel):
     """Prepare payment request"""
     bill_id: str
+    payment_method: PaymentMethod = "hbar"  # Default to HBAR for backward compatibility
 
 
 class PaymentConfirmRequest(BaseModel):
@@ -24,10 +29,23 @@ class PaymentConfirmRequest(BaseModel):
 
 # Response Schemas
 class TransactionDetails(BaseModel):
-    """Hedera transaction details for payment"""
+    """Hedera transaction details for HBAR payment"""
     from_account: str = Field(..., alias="from")
     to_account: str = Field(..., alias="to")
     amount_hbar: Decimal
+    memo: str
+
+    class Config:
+        populate_by_name = True
+
+
+class USDCTransactionDetails(BaseModel):
+    """USDC transaction details for payment"""
+    from_account: str = Field(..., alias="from")
+    to_account: str = Field(..., alias="to")
+    amount_usdc: Decimal
+    token_id: str  # Token contract address (Ethereum) or token ID (Hedera)
+    network: PaymentNetwork
     memo: str
 
     class Config:
@@ -46,20 +64,26 @@ class ExchangeRateInfo(BaseModel):
 class PaymentPrepareResponse(BaseModel):
     """Payment preparation response"""
     bill: dict  # Bill details
-    transaction: TransactionDetails
-    exchange_rate: ExchangeRateInfo
-    minimum_hbar: Decimal = Field(..., description="Minimum HBAR amount required")
+    payment_method: PaymentMethod
+    transaction: Optional[TransactionDetails] = None  # For HBAR payments
+    usdc_transaction: Optional[USDCTransactionDetails] = None  # For USDC payments
+    exchange_rate: Optional[ExchangeRateInfo] = None  # For HBAR payments
+    minimum_hbar: Optional[Decimal] = Field(None, description="Minimum HBAR amount required (for HBAR payments)")
+    minimum_usdc: Optional[Decimal] = Field(None, description="Minimum USDC amount required (for USDC payments)")
 
 
 class PaymentReceipt(BaseModel):
     """Payment receipt data"""
     id: str
     bill_id: str
-    amount_hbar: Decimal
+    payment_method: PaymentMethod = "hbar"
+    amount_hbar: Optional[Decimal] = None
+    amount_usdc: Optional[Decimal] = None
     amount_fiat: Decimal
     currency: Currency
-    exchange_rate: Decimal
-    hedera_tx_id: str
+    exchange_rate: Optional[Decimal] = None  # For HBAR payments
+    hedera_tx_id: Optional[str] = None
+    ethereum_tx_hash: Optional[str] = None
     consensus_timestamp: datetime
     receipt_url: str  # PDF download URL
     created_at: datetime

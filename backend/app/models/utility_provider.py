@@ -40,6 +40,7 @@ class UtilityProvider(Base):
     provider_name = Column(String(100), nullable=False)
     provider_code = Column(String(20), nullable=False, index=True)
     service_areas = Column(ARRAY(String), nullable=True)
+    hedera_account_id = Column(String(50), unique=False, nullable=True, index=True)
     
     # Status
     is_active = Column(Boolean, default=True, nullable=False, index=True)
@@ -64,6 +65,7 @@ class UtilityProvider(Base):
             "provider_name": self.provider_name,
             "provider_code": self.provider_code,
             "service_areas": self.service_areas,
+            "hedera_account_id": self.hedera_account_id,
             "is_active": self.is_active,
             "created_at": self.created_at.isoformat() if self.created_at else None
         }

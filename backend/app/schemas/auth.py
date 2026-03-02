@@ -27,6 +27,8 @@ class WalletType(str, Enum):
 # Request Schemas
 class RegisterRequest(BaseModel):
     """User registration request"""
+    first_name: str = Field(..., min_length=1, max_length=100)
+    last_name: str = Field(..., min_length=1, max_length=100)
     email: EmailStr
     password: Optional[str] = Field(None, min_length=8)
     country_code: CountryCode
@@ -59,6 +61,8 @@ class WalletConnectRequest(BaseModel):
 class UserResponse(BaseModel):
     """User data in responses"""
     id: str
+    first_name: Optional[str]
+    last_name: Optional[str]
     email: str
     country_code: CountryCode
     hedera_account_id: Optional[str]

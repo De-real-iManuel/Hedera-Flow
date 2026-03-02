@@ -62,10 +62,7 @@ class HederaService:
         Returns:
             Tuple of (account_id, private_key)
             
-        Requirements:
-            - FR-1.3: System shall create Hedera testnet account for new users without wallet
-            - US-1: System creates Hedera account (testnet) if user doesn't have one
-            
+        
         Raises:
             Exception: If account creation fails
         """
@@ -189,6 +186,95 @@ class HederaService:
         except Exception as e:
             logger.warning(f"Account {account_id} does not exist or query failed: {e}")
             return False
+    
+    def log_payment_to_hcs(
+        self,
+        topic_id: str,
+        bill_id: str,
+        amount_fiat: float,
+        currency_fiat: str,
+        amount_hbar: float,
+        exchange_rate: float,
+        tx_id: str
+    ) -> dict:
+        """
+        Log a payment to HCS (Hedera Consensus Service)
+        
+        This method creates a payment log message and submits it to the appropriate
+        regional HCS topic for immutable blockchain logging.
+        
+        Args:
+            topic_id: HCS topic ID (e.g., "0.0.5078302" for EU)
+            bill_id: Bill UUID
+            amount_fiat: Payment amount in fiat currency
+            currency_fiat: Fiat currency code (EUR, USD, INR, BRL, NGN)
+            amount_hbar: Payment amount in HBAR
+            exchange_rate: HBAR/fiat exchange rate used
+            tx_id: Hedera transaction ID
+            
+        Returns:
+            dict: HCS submission result with topic_id and sequence_number
+            
+        Requirements:
+            - FR-5.14: System shall log payments to HCS (including HBAR amount and fiat equivalent)
+            - US-8: Payment logged to HCS with Type: "PAYMENT", Bill ID, Amount, Currency, Transaction ID, Timestamp
+            - US-8: User can view HCS sequence number
+            
+        Raises:
+            Exception: If HCS submission fails
+        """
+        try:
+            from hedera import TopicMessageSubmitTransaction, TopicId
+            import json
+            from datetime import datetime
+            
+            logger.info(f"Logging payment to HCS topic {topic_id}...")
+            
+            # Create payment log message per requirements
+            payment_log = {
+                "type": "PAYMENT",
+                "timestamp": int(datetime.utcnow().timestamp()),
+                "bill_id": bill_id,
+                "amount_fiat": amount_fiat,
+                "currency_fiat": currency_fiat,
+                "amount_hbar": amount_hbar,
+                "exchange_rate": exchange_rate,
+                "tx_id": tx_id,
+                "status": "SUCCESS"
+            }
+            
+            # Convert to JSON
+            message_json = json.dumps(payment_log)
+            
+            # Parse topic ID
+            topic = TopicId.fromString(topic_id)
+            
+            # Create and execute transaction
+            transaction = (
+                TopicMessageSubmitTransaction()
+                .setTopicId(topic)
+                .setMessage(message_json)
+            )
+            
+            response = transaction.execute(self.client)
+            receipt = response.getReceipt(self.client)
+            
+            sequence_number = receipt.topicSequenceNumber
+            
+            logger.info(f"✅ Payment logged to HCS topic {topic_id}")
+            logger.info(f"   Sequence Number: {sequence_number}")
+            logger.info(f"   Bill ID: {bill_id}")
+            logger.info(f"   Amount: {amount_hbar} HBAR ({amount_fiat} {currency_fiat})")
+            
+            return {
+                "topic_id": topic_id,
+                "sequence_number": sequence_number,
+                "message": payment_log
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to log payment to HCS: {e}")
+            raise Exception(f"Failed to log payment to HCS: {str(e)}")
     
     def close(self):
         """Close Hedera client connection"""

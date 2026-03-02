@@ -47,6 +47,7 @@ sendgrid==6.11.0
 
 # PDF Generation
 reportlab==4.0.9
+qrcode[pil]==8.0  # QR code generation for receipts
 
 # Rate Limiting
 slowapi==0.1.9

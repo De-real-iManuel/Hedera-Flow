@@ -56,3 +56,22 @@ class ValidationErrorDetail(BaseModel):
 class ValidationErrorResponse(BaseModel):
     """Validation error response (422)"""
     detail: list[ValidationErrorDetail]
+
+
+class ExchangeRateResponse(BaseModel):
+    """Exchange rate response schema"""
+    currency: str = Field(..., description="Currency code (EUR, USD, INR, BRL, NGN)")
+    hbar_price: float = Field(..., description="Price of 1 HBAR in fiat currency", alias="hbarPrice")
+    source: str = Field(..., description="API source (coingecko, coinmarketcap)")
+    fetched_at: str = Field(..., description="ISO 8601 timestamp when rate was fetched", alias="fetchedAt")
+    
+    class Config:
+        populate_by_name = True
+        json_schema_extra = {
+            "example": {
+                "currency": "EUR",
+                "hbarPrice": 0.34,
+                "source": "coingecko",
+                "fetchedAt": "2024-03-18T10:30:00Z"
+            }
+        }

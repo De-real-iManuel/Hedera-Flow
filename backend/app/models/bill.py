@@ -41,9 +41,15 @@ class Bill(Base):
     tariff_snapshot = Column(JSONB, nullable=True)  # Full tariff at time of calculation
     
     # Payment Data
-    amount_hbar = Column(DECIMAL(18, 8), nullable=True)  # HBAR amount
-    exchange_rate = Column(DECIMAL(12, 6), nullable=True)  # HBAR/fiat rate used
+    payment_method = Column(String(20), default='hbar', nullable=False)  # 'hbar', 'usdc_hedera', 'usdc_ethereum'
+    amount_hbar = Column(DECIMAL(18, 8), nullable=True)  # HBAR amount (for HBAR payments)
+    amount_usdc = Column(DECIMAL(20, 6), nullable=True)  # USDC amount (for USDC payments)
+    exchange_rate = Column(DECIMAL(12, 6), nullable=True)  # HBAR/fiat rate used (for HBAR payments)
     exchange_rate_timestamp = Column(TIMESTAMP, nullable=True)
+    
+    # Token Information (for USDC payments)
+    usdc_token_id = Column(String(100), nullable=True)  # Token ID (Hedera) or contract address (Ethereum)
+    payment_network = Column(String(20), nullable=True)  # 'hedera' or 'ethereum'
     
     # Status
     status = Column(
@@ -52,8 +58,9 @@ class Bill(Base):
         nullable=False
     )
     
-    # Hedera Transaction
-    hedera_tx_id = Column(String(100), nullable=True)
+    # Transaction IDs
+    hedera_tx_id = Column(String(100), nullable=True)  # Hedera transaction ID
+    ethereum_tx_hash = Column(String(66), nullable=True)  # Ethereum transaction hash
     hedera_consensus_timestamp = Column(TIMESTAMP, nullable=True)
     
     # Blockchain Logging
@@ -73,6 +80,14 @@ class Bill(Base):
         CheckConstraint(
             "status IN ('pending', 'paid', 'disputed', 'refunded')",
             name="check_bill_status"
+        ),
+        CheckConstraint(
+            "payment_method IN ('hbar', 'usdc_hedera', 'usdc_ethereum')",
+            name="check_payment_method"
+        ),
+        CheckConstraint(
+            "payment_network IS NULL OR payment_network IN ('hedera', 'ethereum')",
+            name="check_payment_network"
         ),
     )
     

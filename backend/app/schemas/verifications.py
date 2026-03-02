@@ -62,6 +62,7 @@ class VerificationResponse(BaseModel):
     hcs_sequence_number: int
     hcs_timestamp: Optional[datetime]
     created_at: datetime
+    bill: Optional[BillSummary] = None  # Bill data if calculation succeeded
 
     class Config:
         from_attributes = True
@@ -81,5 +82,17 @@ class VerificationSummary(BaseModel):
     status: VerificationStatus
     created_at: datetime
 
+    class Config:
+        from_attributes = True
+
+
+class BillSummary(BaseModel):
+    """Bill summary included in verification response"""
+    id: str
+    total_fiat: Decimal
+    currency: str
+    amount_hbar: Optional[Decimal]
+    exchange_rate: Optional[Decimal]
+    
     class Config:
         from_attributes = True

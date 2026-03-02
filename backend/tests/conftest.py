@@ -17,6 +17,8 @@ if test_env_path.exists():
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.core.database import Base
+# Import all models to ensure they're registered with Base.metadata
+from app.models import User, Meter, Bill, UtilityProvider, ExchangeRate
 
 # Use Docker PostgreSQL for testing
 TEST_DATABASE_URL = os.getenv(

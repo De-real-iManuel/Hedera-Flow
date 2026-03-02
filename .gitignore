@@ -34,6 +34,9 @@ backend/.env.supabase.example
 # Documentation and task files (excluding README and QUICKSTART)
 *_SUMMARY.md
 *_GUIDE.md
+*-commits.ps1
+*-commits.sh
+*-commit.ps1
 *_INSTRUCTIONS.md
 *_CHECKLIST.md
 *_REFERENCE.md

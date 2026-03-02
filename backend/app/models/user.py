@@ -2,7 +2,7 @@
 User Database Model
 SQLAlchemy model for users table
 """
-from sqlalchemy import Column, String, Boolean, TIMESTAMP, Enum as SQLEnum, CheckConstraint
+from sqlalchemy import Column, String, Boolean, TIMESTAMP, Enum as SQLEnum, CheckConstraint, JSON
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -58,6 +58,8 @@ class User(Base):
     password_hash = Column(String(255), nullable=True)  # NULL for wallet-only auth
     
     # Profile
+    first_name = Column(String(100), nullable=True)
+    last_name = Column(String(100), nullable=True)
     country_code = Column(
         SQLEnum(CountryCodeEnum, name="country_code_enum"),
         nullable=False,
@@ -87,6 +89,16 @@ class User(Base):
     is_email_verified = Column(Boolean, default=False, nullable=False)
     email_verification_token = Column(String(255), nullable=True, unique=True)
     email_verification_expires = Column(TIMESTAMP(timezone=True), nullable=True)
+    
+    # Subsidy Eligibility (FR-4.5)
+    subsidy_eligible = Column(Boolean, default=False, nullable=False)
+    subsidy_type = Column(String(50), nullable=True)  # e.g., "low_income", "senior_citizen", "disability", "energy_efficiency"
+    subsidy_verified_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    subsidy_expires_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    
+    # User Preferences and Settings
+    preferences = Column(JSON, nullable=True, default={})  # Store user preferences as JSON
+    security_settings = Column(JSON, nullable=True, default={})  # Store security settings as JSON
     
     # Relationships
     bills = relationship("Bill", back_populates="user", cascade="all, delete-orphan")

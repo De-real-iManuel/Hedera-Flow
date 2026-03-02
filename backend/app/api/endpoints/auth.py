@@ -10,6 +10,7 @@ import logging
 import secrets
 
 from app.core.database import get_db
+from app.core.dependencies import get_current_user as get_current_user_dependency
 from app.schemas.auth import RegisterRequest, LoginRequest, WalletConnectRequest, AuthResponse, UserResponse
 from app.models.user import User, CountryCodeEnum, WalletTypeEnum
 from app.utils.auth import hash_password, create_access_token, validate_password_strength
@@ -98,6 +99,8 @@ async def register(
         
         # Create user in database
         new_user = User(
+            first_name=request.first_name,
+            last_name=request.last_name,
             email=request.email,
             password_hash=password_hash,
             country_code=request.country_code,
@@ -134,6 +137,8 @@ async def register(
         # Prepare response
         user_response = UserResponse(
             id=str(new_user.id),
+            first_name=new_user.first_name,
+            last_name=new_user.last_name,
             email=new_user.email,
             country_code=new_user.country_code,
             hedera_account_id=new_user.hedera_account_id,
@@ -249,6 +254,8 @@ async def login(
         # Prepare response
         user_response = UserResponse(
             id=str(user.id),
+            first_name=user.first_name,
+            last_name=user.last_name,
             email=user.email,
             country_code=user.country_code,
             hedera_account_id=user.hedera_account_id,
@@ -579,3 +586,39 @@ async def verify_email(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Email verification failed: {str(e)}"
         )
+
+
+@router.get("/me", response_model=UserResponse)
+async def get_current_user_endpoint(
+    current_user: User = Depends(get_current_user_dependency)
+):
+    """
+    Get current authenticated user
+    
+    This endpoint returns the currently authenticated user's information.
+    
+    Requirements:
+        - FR-1.4: System shall use JWT tokens for session management
+        - NFR-2.1: All API endpoints shall require authentication
+    
+    Args:
+        current_user: Current authenticated user from JWT token
+        
+    Returns:
+        UserResponse with current user data
+        
+    Raises:
+        HTTPException 401: Unauthorized (no valid token)
+    """
+    return UserResponse(
+        id=str(current_user.id),
+        first_name=current_user.first_name,
+        last_name=current_user.last_name,
+        email=current_user.email,
+        country_code=current_user.country_code,
+        hedera_account_id=current_user.hedera_account_id,
+        wallet_type=current_user.wallet_type,
+        created_at=current_user.created_at,
+        last_login=current_user.last_login,
+        is_active=current_user.is_active
+    )

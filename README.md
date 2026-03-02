@@ -244,6 +244,18 @@ Built with shadcn-ui, includes:
 - **shadcn-ui**: https://ui.shadcn.com
 - **TanStack Query**: https://tanstack.com/query
 
+## 🌐 Live HCS Topics (Hedera Consensus Service)
+
+View real-time blockchain logs on HashScan:
+
+- **Europe (EU)**: https://hashscan.io/testnet/topic/0.0.8052384
+- **United States (US)**: https://hashscan.io/testnet/topic/0.0.8052396
+- **Asia**: https://hashscan.io/testnet/topic/0.0.8052389
+- **South America (SA)**: https://hashscan.io/testnet/topic/0.0.8052390
+- **Africa**: https://hashscan.io/testnet/topic/0.0.8052391
+
+All verifications and payments are logged immutably to these regional HCS topics.
+
 ## 📊 Status
 
 - **Backend**: ✅ Running (partial implementation)

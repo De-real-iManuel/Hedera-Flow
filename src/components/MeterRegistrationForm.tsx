@@ -117,6 +117,41 @@ export function MeterRegistrationForm({ onSuccess, onCancel }: MeterRegistration
   const isNigeria = user?.country_code === 'NG';
   const nigerianBands = ['A', 'B', 'C', 'D', 'E'];
   
+  // Get meter ID format hint based on country
+  const getMeterIdHint = () => {
+    switch (user?.country_code) {
+      case 'ES':
+        return 'Format: ES + 8-10 digits (e.g., ES12345678)';
+      case 'US':
+        return 'Format: 10-15 alphanumeric characters (e.g., MTR1234567890)';
+      case 'IN':
+        return 'Format: 10-12 digits (e.g., 1234567890)';
+      case 'BR':
+        return 'Format: 10-14 digits (e.g., 12345678901234)';
+      case 'NG':
+        return 'Format: 11-13 digits (e.g., 12345678901)';
+      default:
+        return 'Find this on your electricity meter or bill';
+    }
+  };
+  
+  const getMeterIdPlaceholder = () => {
+    switch (user?.country_code) {
+      case 'ES':
+        return 'ES12345678';
+      case 'US':
+        return 'MTR1234567890';
+      case 'IN':
+        return '1234567890';
+      case 'BR':
+        return '12345678901234';
+      case 'NG':
+        return '12345678901';
+      default:
+        return 'Enter your meter number';
+    }
+  };
+  
   if (showSuccess) {
     return (
       <Card>
@@ -150,11 +185,11 @@ export function MeterRegistrationForm({ onSuccess, onCancel }: MeterRegistration
               id="meterId"
               value={meterId}
               onChange={(e) => setMeterId(e.target.value)}
-              placeholder="Enter your meter number"
+              placeholder={getMeterIdPlaceholder()}
               required
             />
             <p className="text-xs text-muted-foreground">
-              Find this on your electricity meter or bill
+              {getMeterIdHint()}
             </p>
           </div>
           
