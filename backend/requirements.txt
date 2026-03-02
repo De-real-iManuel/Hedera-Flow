@@ -43,7 +43,7 @@ httpx==0.26.0
 aiohttp==3.9.1  # For Mirror Node async HTTP requests
 
 # Email
-sendgrid==6.11.0
+sendgrid==6.12.5
 
 # PDF Generation
 reportlab==4.0.9
