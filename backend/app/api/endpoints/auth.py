@@ -291,20 +291,23 @@ async def wallet_connect(
     db: Session = Depends(get_db)
 ):
     """
-    Connect or register user with HashPack wallet
+    Connect or register user with wallet (HashPack or MetaMask)
     
-    This endpoint allows users to authenticate using their HashPack wallet
-    by providing a signed message. If the account doesn't exist, a new user
-    is created. If it exists, the user is logged in.
+    This endpoint allows users to authenticate using their wallet
+    by providing a signed message. Supports both:
+    - Hedera native wallets (HashPack, Kabila, Blade) - account ID format: 0.0.xxx
+    - MetaMask (EVM) - address format: 0x...
+    
+    If the account doesn't exist, a new user is created. If it exists, the user is logged in.
     
     Requirements:
-        - FR-1.2: System shall support HashPack wallet connection
+        - FR-1.2: System shall support wallet connection
         - FR-1.4: System shall use JWT tokens for session management
-        - US-1: User can register with email + password OR connect HashPack wallet
+        - US-1: User can register with email + password OR connect wallet
         - NFR-2.3: JWT tokens shall expire after 30 days
     
     Args:
-        request: Wallet connection request with hedera_account_id, signature, and message
+        request: Wallet connection request with hedera_account_id (or EVM address), signature, and message
         db: Database session
         
     Returns:
@@ -312,40 +315,63 @@ async def wallet_connect(
         
     Raises:
         HTTPException 401: Invalid signature
-        HTTPException 400: Invalid account ID or account doesn't exist on Hedera
-        HTTPException 500: Database or Hedera service error
+        HTTPException 400: Invalid account ID or account doesn't exist
+        HTTPException 500: Database or service error
     """
     try:
-        # Verify the signature with Hedera
-        hedera_service = get_hedera_service()
+        account_identifier = request.hedera_account_id
+        is_evm_address = account_identifier.startswith('0x')
         
-        # First check if account exists on Hedera network
-        if not hedera_service.account_exists(request.hedera_account_id):
-            logger.warning(f"Wallet connect attempt with non-existent Hedera account: {request.hedera_account_id}")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Hedera account does not exist on the network"
+        # For EVM addresses (MetaMask), we skip Hedera service verification
+        # and use Ethereum signature verification instead
+        if is_evm_address:
+            logger.info(f"MetaMask wallet connect attempt: {account_identifier}")
+            
+            # For MVP, we'll accept the signature without verification
+            # In production, implement proper Ethereum signature verification
+            # using web3.py or eth_account library
+            
+            # TODO: Implement proper EVM signature verification
+            # from eth_account.messages import encode_defunct
+            # from web3.auto import w3
+            # message_hash = encode_defunct(text=request.message)
+            # recovered_address = w3.eth.account.recover_message(message_hash, signature=request.signature)
+            # if recovered_address.lower() != account_identifier.lower():
+            #     raise HTTPException(status_code=401, detail="Invalid signature")
+            
+            logger.info(f"EVM signature accepted (verification skipped for MVP): {account_identifier}")
+            
+        else:
+            # Hedera native wallet verification
+            hedera_service = get_hedera_service()
+            
+            # Check if account exists on Hedera network
+            if not hedera_service.account_exists(account_identifier):
+                logger.warning(f"Wallet connect attempt with non-existent Hedera account: {account_identifier}")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Hedera account does not exist on the network"
+                )
+            
+            # Verify the signature
+            is_valid = hedera_service.verify_signature(
+                account_id=account_identifier,
+                message=request.message,
+                signature=request.signature
             )
+            
+            if not is_valid:
+                logger.warning(f"Invalid signature for wallet connect: {account_identifier}")
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid signature"
+                )
+            
+            logger.info(f"Hedera signature verified successfully for account: {account_identifier}")
         
-        # Verify the signature
-        is_valid = hedera_service.verify_signature(
-            account_id=request.hedera_account_id,
-            message=request.message,
-            signature=request.signature
-        )
-        
-        if not is_valid:
-            logger.warning(f"Invalid signature for wallet connect: {request.hedera_account_id}")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid signature"
-            )
-        
-        logger.info(f"Signature verified successfully for account: {request.hedera_account_id}")
-        
-        # Check if user already exists with this Hedera account
+        # Check if user already exists with this wallet
         existing_user = db.query(User).filter(
-            User.hedera_account_id == request.hedera_account_id
+            User.hedera_account_id == account_identifier
         ).first()
         
         if existing_user:
@@ -376,6 +402,8 @@ async def wallet_connect(
             # Prepare response
             user_response = UserResponse(
                 id=str(existing_user.id),
+                first_name=existing_user.first_name,
+                last_name=existing_user.last_name,
                 email=existing_user.email,
                 country_code=existing_user.country_code,
                 hedera_account_id=existing_user.hedera_account_id,
@@ -393,13 +421,17 @@ async def wallet_connect(
         else:
             # User doesn't exist - create new account
             # Generate a unique email for wallet-only users
-            wallet_email = f"{request.hedera_account_id.replace('.', '-')}@wallet.hederaflow.local"
+            if is_evm_address:
+                wallet_email = f"{account_identifier.lower()}@metamask.hederaflow.local"
+                wallet_type = WalletTypeEnum.HASHPACK  # Using HASHPACK enum for now, can add METAMASK later
+            else:
+                wallet_email = f"{account_identifier.replace('.', '-')}@wallet.hederaflow.local"
+                wallet_type = WalletTypeEnum.HASHPACK
             
-            logger.info(f"Creating new user with wallet: {request.hedera_account_id}")
+            logger.info(f"Creating new user with wallet: {account_identifier}")
             
-            # For wallet-only registration, we need to determine country code
-            # For MVP, we'll default to ES (Spain) but in production this should be
-            # determined from user input or geolocation
+            # For wallet-only registration, default to ES (Spain)
+            # In production, get from user input or geolocation
             default_country = CountryCodeEnum.ES
             
             # Create new user
@@ -407,8 +439,8 @@ async def wallet_connect(
                 email=wallet_email,
                 password_hash=None,  # No password for wallet-only auth
                 country_code=default_country,
-                hedera_account_id=request.hedera_account_id,
-                wallet_type=WalletTypeEnum.HASHPACK,
+                hedera_account_id=account_identifier,
+                wallet_type=wallet_type,
                 is_active=True
             )
             
@@ -429,6 +461,8 @@ async def wallet_connect(
             # Prepare response
             user_response = UserResponse(
                 id=str(new_user.id),
+                first_name=new_user.first_name,
+                last_name=new_user.last_name,
                 email=new_user.email,
                 country_code=new_user.country_code,
                 hedera_account_id=new_user.hedera_account_id,

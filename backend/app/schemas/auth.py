@@ -52,9 +52,22 @@ class LoginRequest(BaseModel):
 
 class WalletConnectRequest(BaseModel):
     """Wallet connection request"""
-    hedera_account_id: str = Field(..., pattern=r"^0\.0\.\d+$")
+    hedera_account_id: str = Field(..., description="Hedera account ID (0.0.xxx) or EVM address (0x...)")
     signature: str
     message: str
+
+    @validator('hedera_account_id')
+    def validate_account_format(cls, v):
+        """Validate that the account is either Hedera format or EVM format"""
+        # Hedera account ID format: 0.0.12345
+        hedera_pattern = r"^0\.0\.\d+$"
+        # EVM address format: 0x followed by 40 hex characters
+        evm_pattern = r"^0x[a-fA-F0-9]{40}$"
+        
+        import re
+        if not (re.match(hedera_pattern, v) or re.match(evm_pattern, v)):
+            raise ValueError('Must be a valid Hedera account ID (0.0.xxx) or EVM address (0x...)')
+        return v
 
 
 # Response Schemas
