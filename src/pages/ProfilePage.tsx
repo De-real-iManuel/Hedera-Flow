@@ -7,6 +7,8 @@ import AppHeader from "@/components/AppHeader";
 import { useAuth } from "@/hooks/useAuth";
 import { useMeters } from "@/hooks/useMeters";
 import { userApi, UserPreferences } from "@/lib/api";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import WalletConnect from "@/components/WalletConnect";
 
 const ProfilePage = () => {
   const navigate = useNavigate();
@@ -14,6 +16,7 @@ const ProfilePage = () => {
   const { meters } = useMeters();
   const [preferences, setPreferences] = useState<UserPreferences | null>(null);
   const [isDarkMode, setIsDarkMode] = useState(false);
+  const [showWalletDialog, setShowWalletDialog] = useState(false);
   
   // Get user initials
   const getInitials = () => {
@@ -71,9 +74,9 @@ const ProfilePage = () => {
     }
   };
 
-  // Navigate to wallet connect
+  // Open wallet connect dialog
   const handleWalletConnect = () => {
-    navigate('/wallet-connect');
+    setShowWalletDialog(true);
   };
 
   // Navigate to notifications settings
@@ -237,6 +240,21 @@ const ProfilePage = () => {
           </button>
         </motion.div>
       </div>
+
+      {/* Wallet Connect Dialog */}
+      <Dialog open={showWalletDialog} onOpenChange={setShowWalletDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Connect Wallet</DialogTitle>
+            <DialogDescription>
+              Connect your MetaMask wallet to enable HBAR payments for prepaid tokens
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <WalletConnect />
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
