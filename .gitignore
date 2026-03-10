@@ -93,6 +93,7 @@ backend/test_*.py
 
 # Docs folder
 docs/
+.md
 
 # Kiro specs and tasks
 .kiro/specs/
@@ -113,3 +114,13 @@ __pycache__/
 
 # Backend logs
 backend/*.log
+
+# Postman
+postman/
+.postman/
+
+# All markdown documentation files except README
+*.md
+!README.md
+!backend/README.md
+!.github/**/*.md

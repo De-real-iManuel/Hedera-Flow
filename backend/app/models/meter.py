@@ -76,12 +76,12 @@ class Meter(Base):
     utility_provider = Column(String(100), nullable=False)  # Denormalized
     
     meter_type = Column(
-        SQLEnum(MeterTypeEnum, name="meter_type_enum"),
+        SQLEnum(MeterTypeEnum, name="meter_type_enum", values_callable=lambda x: [e.value for e in x]),
         nullable=False
     )
     
     band_classification = Column(
-        SQLEnum(BandClassificationEnum, name="band_classification_enum"),
+        SQLEnum(BandClassificationEnum, name="band_classification_enum", values_callable=lambda x: [e.value for e in x]),
         nullable=True
     )
     
@@ -100,6 +100,7 @@ class Meter(Base):
     # Relationships
     user = relationship("User", back_populates="meters")
     bills = relationship("Bill", back_populates="meter", cascade="all, delete-orphan")
+    prepaid_tokens = relationship("PrepaidToken", back_populates="meter", cascade="all, delete-orphan")
     
     # Unique constraint: user cannot register same meter_id twice
     __table_args__ = (

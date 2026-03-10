@@ -57,13 +57,16 @@ async def create_meter(
     """
     try:
         # Normalize meter ID
-        normalized_meter_id = normalize_meter_id(request.meter_id, current_user.country_code.value)
+        country_code_str = current_user.country_code.value if hasattr(current_user.country_code, 'value') else str(current_user.country_code)
+        normalized_meter_id = normalize_meter_id(request.meter_id, country_code_str)
+        
+        logger.info(f"Creating meter for user {current_user.id}, meter_id: {normalized_meter_id}")
         
         # Validate meter ID format per region (FR-2.2)
-        is_valid, error_message = validate_meter_id(normalized_meter_id, current_user.country_code.value)
+        is_valid, error_message = validate_meter_id(normalized_meter_id, country_code_str)
         if not is_valid:
             logger.warning(
-                f"Invalid meter ID format: {request.meter_id} for country {current_user.country_code.value}. "
+                f"Invalid meter ID format: {request.meter_id} for country {country_code_str}. "
                 f"Error: {error_message}"
             )
             raise HTTPException(
@@ -93,14 +96,14 @@ async def create_meter(
             )
         
         # Validate that utility provider matches the user's country
-        if utility_provider.country_code != current_user.country_code.value:
+        if utility_provider.country_code != country_code_str:
             logger.warning(
-                f"Country mismatch: User country {current_user.country_code.value}, "
+                f"Country mismatch: User country {country_code_str}, "
                 f"Provider country {utility_provider.country_code}"
             )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Utility provider must be from your country ({current_user.country_code.value})"
+                detail=f"Utility provider must be from your country ({country_code_str})"
             )
         
         # Validate state/province matches utility provider
@@ -120,17 +123,19 @@ async def create_meter(
             Meter.meter_id == normalized_meter_id
         ).first()
         
+        logger.info(f"Checking for existing meter: {normalized_meter_id}, found: {existing_meter is not None}")
+        
         if existing_meter:
             logger.warning(
                 f"Meter already registered: {normalized_meter_id} for user {current_user.id}"
             )
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="Meter already registered"
+                detail=f"Meter {normalized_meter_id} is already registered to your account. Please use a different meter ID or update the existing meter."
             )
         
         # Validate band classification for Nigeria
-        if current_user.country_code.value == 'NG' and not request.band_classification:
+        if country_code_str == 'NG' and not request.band_classification:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Band classification is required for Nigeria meters"
@@ -186,14 +191,23 @@ async def create_meter(
         raise
     except IntegrityError as e:
         db.rollback()
-        logger.error(f"Database integrity error during meter creation: {e}")
+        error_msg = str(e.orig) if hasattr(e, 'orig') else str(e)
+        logger.error(f"Database integrity error during meter creation: {error_msg}")
+        
+        # Check if it's a duplicate meter error
+        if 'meters_user_id_meter_id_key' in error_msg or 'unique constraint' in error_msg.lower():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Meter {normalized_meter_id} is already registered to your account"
+            )
+        
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Meter already registered or invalid data"
+            detail="Invalid meter data or database constraint violation"
         )
     except Exception as e:
         db.rollback()
-        logger.error(f"Unexpected error during meter creation: {e}")
+        logger.error(f"Unexpected error during meter creation: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to register meter: {str(e)}"
