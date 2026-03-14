@@ -59,13 +59,25 @@ class HederaClient:
         """Initialize the Hedera client with operator credentials"""
         from config import settings
         import os
+        import logging
         
         try:
             logger.info("Initializing Hedera client for testnet...")
             
-            # Workaround for Windows DNS issues with Java
-            # Prefer IPv4 to avoid DNS resolution problems
-            os.environ['JAVA_TOOL_OPTIONS'] = '-Djava.net.preferIPv4Stack=true -Djava.net.preferIPv4Addresses=true'
+            # Suppress verbose Java logging from Hedera SDK
+            os.environ['JAVA_TOOL_OPTIONS'] = (
+                '-Djava.net.preferIPv4Stack=true '
+                '-Djava.net.preferIPv4Addresses=true '
+                '-Djava.util.logging.config.file=logging.properties '
+                '-Dorg.slf4j.simpleLogger.defaultLogLevel=WARN '
+                '-Dorg.slf4j.simpleLogger.log.com.hedera=ERROR '
+                '-Dorg.slf4j.simpleLogger.log.kivy.jnius=ERROR '
+                '-Djnius.debug=false'
+            )
+            
+            # Set Python logging levels for related modules
+            logging.getLogger('kivy.jnius').setLevel(logging.ERROR)
+            logging.getLogger('jnius').setLevel(logging.ERROR)
             
             # Create client for testnet
             self._client = Client.forTestnet()

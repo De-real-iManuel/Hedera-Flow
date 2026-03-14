@@ -91,6 +91,30 @@ export function PrepaidTokenPurchase({
   };
 
   const handlePurchase = async () => {
+    console.log('Purchase started - User:', user?.email, 'Meter ID:', meterId);
+    console.log('Auth token in localStorage:', localStorage.getItem('auth_token') ? 'Present' : 'Missing');
+    console.log('Preview data:', preview);
+    
+    // Validate meter ID format
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(meterId)) {
+      toast.error('❌ Invalid Meter ID', {
+        description: `Meter ID format is invalid: ${meterId}`,
+        duration: 4000,
+        className: 'bg-red-50 border-red-500',
+      });
+      return;
+    }
+    
+    if (!user) {
+      toast.error('🔐 Authentication Required', {
+        description: 'Please log in to purchase tokens.',
+        duration: 4000,
+        className: 'bg-red-50 border-red-500',
+      });
+      return;
+    }
+    
     if (!preview) {
       toast.error('⚠️ Preview Required', {
         description: 'Please wait for preview calculation to complete.',
@@ -145,12 +169,26 @@ export function PrepaidTokenPurchase({
         className: 'bg-blue-50 border-blue-500',
       });
 
-      const buyResponse = await prepaidApi.buy({
-        meter_id: meterId,
-        amount_fiat: amount,
-        currency: currency,
-        payment_method: 'HBAR',
-      });
+      console.log('Making buy API call...');
+      
+      let buyResponse;
+      try {
+        buyResponse = await prepaidApi.buy({
+          meter_id: meterId,
+          amount_fiat: amount,
+          currency: currency,
+          payment_method: 'HBAR',
+        });
+        console.log('Buy response received:', buyResponse);
+      } catch (apiError) {
+        console.error('Buy API call failed:', apiError);
+        throw new Error(`Buy API call failed: ${apiError instanceof Error ? apiError.message : 'Unknown error'}`);
+      }
+
+      if (!buyResponse || !buyResponse.token) {
+        console.error('Invalid buy response:', buyResponse);
+        throw new Error('Invalid response from buy endpoint: ' + JSON.stringify(buyResponse));
+      }
 
       const tokenId = buyResponse.token.token_id;
       const transactionDetails = buyResponse.token;
@@ -185,7 +223,21 @@ export function PrepaidTokenPurchase({
       });
 
       // For MetaMask, we use the transaction hash as the Hedera TX ID
-      const confirmResponse = await prepaidApi.confirm(meterId, paymentResult.transactionHash);
+      console.log('Making confirm API call with:', { tokenId, transactionHash: paymentResult.transactionHash });
+      
+      let confirmResponse;
+      try {
+        confirmResponse = await prepaidApi.confirm(tokenId, paymentResult.transactionHash);
+        console.log('Confirm response received:', confirmResponse);
+      } catch (confirmError) {
+        console.error('Confirm API call failed:', confirmError);
+        throw new Error(`Confirm API call failed: ${confirmError instanceof Error ? confirmError.message : 'Unknown error'}`);
+      }
+
+      if (!confirmResponse || !confirmResponse.token) {
+        console.error('Invalid confirm response:', confirmResponse);
+        throw new Error('Invalid response from confirm endpoint: ' + JSON.stringify(confirmResponse));
+      }
       
       setLoadingStage('');
       
@@ -211,18 +263,19 @@ export function PrepaidTokenPurchase({
               <p className="text-xs text-green-700">
                 ✓ Receipt confirmed and logged to Hedera HCS
               </p>
+              <p className="text-xs text-green-600 mt-1">
+                📄 View receipt in Transaction History
+              </p>
             </div>
           </div>
         ),
         duration: 8000,
         className: 'bg-green-50 border-green-500',
         action: {
-          label: 'View on HashScan',
+          label: 'View Receipt',
           onClick: () => {
-            window.open(
-              `https://hashscan.io/testnet/transaction/${paymentResult.transactionHash}`,
-              '_blank'
-            );
+            // Navigate to history or open receipt modal
+            window.location.href = '/history';
           },
         },
       });
@@ -282,6 +335,35 @@ export function PrepaidTokenPurchase({
       maximumFractionDigits: 2,
     })}`;
   };
+
+  // Show authentication required message if user is not logged in
+  if (!user) {
+    return (
+      <Card className="w-full max-w-2xl">
+        <CardHeader>
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-red-100 rounded-lg">
+              <AlertCircle className="w-6 h-6 text-red-600" />
+            </div>
+            <div>
+              <CardTitle className="text-2xl">Authentication Required</CardTitle>
+              <CardDescription>
+                Please log in to purchase prepaid electricity tokens
+              </CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <Alert className="bg-red-50 border-red-200">
+            <AlertCircle className="h-4 w-4 text-red-600" />
+            <AlertDescription className="text-red-800">
+              You must be logged in to purchase tokens. Please log in and try again.
+            </AlertDescription>
+          </Alert>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card className="w-full max-w-2xl">

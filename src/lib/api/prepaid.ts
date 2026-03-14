@@ -12,21 +12,24 @@ export interface PrepaidTokenPreview {
 export interface PrepaidToken {
   id: string;
   token_id: string;
+  sts_token?: string | null;
   user_id: string;
   meter_id: string;
-  amount_fiat: number;
+  amount_paid_fiat: number;
   currency: string;
-  amount_hbar: number;
+  amount_paid_hbar: number | null;
   units_purchased: number;
   units_remaining: number;
   tariff_rate: number;
   exchange_rate: number;
-  status: 'active' | 'low' | 'depleted';
-  hedera_tx_id: string;
-  hcs_sequence_number?: number;
+  status: 'active' | 'low' | 'depleted' | 'expired' | 'cancelled';
+  hedera_tx_id: string | null;
+  hedera_consensus_timestamp?: string | null;
+  hcs_topic_id?: string | null;
+  hcs_sequence_number?: number | null;
+  issued_at: string;
   expires_at: string;
-  created_at: string;
-  updated_at: string;
+  depleted_at?: string | null;
 }
 
 export interface PrepaidBalance {
@@ -46,8 +49,13 @@ export interface BuyTokenRequest {
 
 export interface BuyTokenResponse {
   token: PrepaidToken;
-  message: string;
-  hcs_topic_id: string;
+  transaction: {
+    from: string;
+    to: string;
+    amount_hbar?: number;
+    amount_usdc?: number;
+    memo: string;
+  };
 }
 
 export const prepaidApi = {
@@ -68,10 +76,15 @@ export const prepaidApi = {
   },
 
   // Confirm token purchase with Hedera transaction ID
-  confirm: async (meterId: string, hederaTxId: string): Promise<BuyTokenResponse> => {
-    const response = await apiClient.post<BuyTokenResponse>('/prepaid/confirm', {
-      meter_id: meterId,
-      hedera_tx_id: hederaTxId,
+  confirm: async (tokenId: string, hederaTxId: string): Promise<BuyTokenResponse> => {
+    const formData = new FormData();
+    formData.append('token_id', tokenId);
+    formData.append('hedera_tx_id', hederaTxId);
+    
+    const response = await apiClient.post<BuyTokenResponse>('/prepaid/confirm-payment', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
     });
     return response.data;
   },
@@ -89,9 +102,43 @@ export const prepaidApi = {
   },
 
   // List all tokens for current user
-  listTokens: async (meterId?: string): Promise<PrepaidToken[]> => {
-    const params = meterId ? { meter_id: meterId } : {};
-    const response = await apiClient.get<PrepaidToken[]>('/prepaid/tokens', { params });
+  listTokens: async (params?: {
+    meterId?: string;
+    status?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<PrepaidToken[]> => {
+    const queryParams = new URLSearchParams();
+    
+    if (params?.meterId) queryParams.append('meter_id', params.meterId);
+    if (params?.status) queryParams.append('status', params.status);
+    if (params?.dateFrom) queryParams.append('date_from', params.dateFrom);
+    if (params?.dateTo) queryParams.append('date_to', params.dateTo);
+    if (params?.limit) queryParams.append('limit', params.limit.toString());
+    if (params?.offset) queryParams.append('offset', params.offset.toString());
+    
+    const response = await apiClient.get<PrepaidToken[]>(`/prepaid/tokens?${queryParams}`);
+    return response.data;
+  },
+
+  // Get receipt for a token
+  getReceipt: async (tokenId: string, format: 'html' | 'text' | 'json' = 'html'): Promise<string | object> => {
+    const response = await apiClient.get(`/prepaid/tokens/${tokenId}/receipt?format=${format}`);
+    return response.data;
+  },
+
+  // Email receipt for a token
+  emailReceipt: async (tokenId: string, emailAddress: string): Promise<{ message: string; sent_at: string }> => {
+    const formData = new FormData();
+    formData.append('email_address', emailAddress);
+    
+    const response = await apiClient.post(`/prepaid/tokens/${tokenId}/receipt/email`, formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
     return response.data;
   },
 };

@@ -201,6 +201,7 @@ async def prepare_payment(
             "currency": bill.currency,
             "consumption_kwh": float(bill.consumption_kwh)
         },
+        payment_method="hbar",  # Add the missing payment_method field
         transaction=transaction,
         exchange_rate=exchange_rate,
         minimum_hbar=amount_hbar

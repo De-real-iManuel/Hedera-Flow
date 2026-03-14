@@ -1,34 +1,8 @@
 import { useState, useCallback, useEffect } from 'react';
 import { toast } from 'sonner';
 import { authApi } from '@/lib/api';
-
-// Improved HashPack detection - checks multiple indicators
-const checkHashPackInstalled = (): boolean => {
-  if (typeof window === 'undefined') return false;
-  
-  // Check all possible HashPack injection points
-  const win = window as any;
-  const hasHashPack = typeof win.hashpack !== 'undefined';
-  const hasHashConnect = typeof win.hashconnect !== 'undefined';
-  const hasMeta = document.querySelector('meta[name="hashpack-extension"]') !== null;
-  const hasLocalStorage = localStorage.getItem('hashconnectData') !== null;
-  
-  // Check if HashPack extension ID is in the page
-  const hasExtensionScript = Array.from(document.querySelectorAll('script')).some(
-    script => script.src.includes('chrome-extension://') && script.src.includes('gjagmgiddbbciopjhllkdnddhcglnemk')
-  );
-  
-  console.log('HashPack detection:', { 
-    hasHashPack, 
-    hasHashConnect, 
-    hasMeta, 
-    hasLocalStorage,
-    hasExtensionScript,
-    windowKeys: Object.keys(win).filter(k => k.toLowerCase().includes('hash'))
-  });
-  
-  return hasHashPack || hasHashConnect || hasMeta || hasLocalStorage || hasExtensionScript;
-};
+import { HashConnect, DappMetadata, SessionData, HashConnectConnectionState } from 'hashconnect';
+import { LedgerId } from '@hashgraph/sdk';
 
 interface WalletState {
   isConnected: boolean;
@@ -41,179 +15,193 @@ export const useHashPackDirect = () => {
     accountId: null,
   });
   const [isConnecting, setIsConnecting] = useState(false);
-  const [hashPackFound, setHashPackFound] = useState(false);
+  const [hashConnect, setHashConnect] = useState<HashConnect | null>(null);
+  const [pairingString, setPairingString] = useState<string>('');
 
-  // Check for HashPack on mount and periodically
+  // Initialize HashConnect on mount
   useEffect(() => {
-    let checkCount = 0;
-    const maxChecks = 20; // Increased from 10
-    
-    const checkHashPack = () => {
-      const found = checkHashPackInstalled();
-      setHashPackFound(found);
-      checkCount++;
-      
-      console.log(`HashPack check ${checkCount}/${maxChecks}: ${found ? 'Found' : 'Not found'}`);
-      
-      // Stop checking once found or max checks reached
-      if (found || checkCount >= maxChecks) {
-        if (intervalId) clearInterval(intervalId);
-      }
-      
-      return found;
-    };
-
-    // Check immediately
-    checkHashPack();
-
-    // Check periodically with longer interval (HashPack extension loads asynchronously)
-    const intervalId = setInterval(checkHashPack, 1000); // Increased from 500ms to 1000ms
-
-    return () => {
-      if (intervalId) clearInterval(intervalId);
-    };
+    initializeHashConnect();
   }, []);
 
-  // Connect using HashConnect library
-  const connectHashPack = useCallback(async () => {
-    setIsConnecting(true);
-    
+  const initializeHashConnect = async () => {
     try {
-      // Final check before attempting connection
-      const isInstalled = checkHashPackInstalled();
-      console.log('Final HashPack check before connect:', isInstalled);
-      
-      if (!isInstalled) {
-        toast.error('HashPack Not Found', {
-          description: 'Please install HashPack extension and refresh the page.',
-          duration: 5000,
-          action: {
-            label: 'Get HashPack',
-            onClick: () => window.open('https://www.hashpack.app/download', '_blank'),
-          },
-        });
-        setIsConnecting(false);
-        return;
-      }
-
-      // Dynamic import of HashConnect
-      const { HashConnect } = await import('hashconnect');
-      
-      const hashconnect = new HashConnect();
+      console.log('Initializing HashConnect...');
       
       // App metadata
-      const appMetadata = {
+      const appMetadata: DappMetadata = {
         name: 'Hedera Flow',
         description: 'Blockchain-powered utility verification platform',
-        icons: [window.location.origin + '/hedera-flow-logo.png'],
+        icons: [`${window.location.origin}/hedera-flow-logo.png`],
+        url: window.location.origin,
       };
 
-      toast.info('Initializing connection...', {
-        description: 'Setting up HashConnect',
+      // Create HashConnect instance with correct v3 API
+      const hashconnect = new HashConnect(
+        LedgerId.TESTNET,
+        import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || 'demo-project-id',
+        appMetadata,
+        true // debug mode
+      );
+
+      // Set up event listeners BEFORE init
+      hashconnect.pairingEvent.on((data: SessionData) => {
+        console.log('Pairing event:', data);
+        handlePairingEvent(data);
       });
 
-      // Initialize HashConnect
-      let initData;
-      try {
-        initData = await hashconnect.init(appMetadata, 'testnet', false);
-        console.log('HashConnect initialized:', initData);
-      } catch (error) {
-        console.error('HashConnect init failed:', error);
-        throw new Error('Failed to initialize HashConnect. Please try again.');
+      hashconnect.disconnectionEvent.on(() => {
+        console.log('Disconnection event');
+        setWalletState({ isConnected: false, accountId: null });
+      });
+
+      hashconnect.connectionStatusChangeEvent.on((state: HashConnectConnectionState) => {
+        console.log('Connection status changed:', state);
+      });
+
+      // Initialize - this will automatically detect and pair with extension if installed
+      const initData = await hashconnect.init();
+      console.log('HashConnect initialized:', initData);
+
+      setHashConnect(hashconnect);
+      
+      // Get pairing string for QR code
+      const pairingStr = hashconnect.pairingString;
+      if (pairingStr) {
+        setPairingString(pairingStr);
+        console.log('Pairing string:', pairingStr);
       }
 
-      // Set up pairing event listener
-      hashconnect.pairingEvent.on((pairingData) => {
-        console.log('Pairing event received:', pairingData);
-        
-        if (pairingData.accountIds && pairingData.accountIds.length > 0) {
-          const accountId = pairingData.accountIds[0];
-          
-          setWalletState({
-            isConnected: true,
-            accountId,
-          });
+      // Check for existing connection
+      const connectedAccounts = hashconnect.connectedAccountIds;
+      if (connectedAccounts && connectedAccounts.length > 0) {
+        const accountId = connectedAccounts[0].toString();
+        console.log('Found existing connection:', accountId);
+        setWalletState({
+          isConnected: true,
+          accountId,
+        });
+      }
 
-          toast.success('Wallet Connected!', {
-            description: `Account: ${accountId}`,
-          });
+    } catch (error) {
+      console.error('Failed to initialize HashConnect:', error);
+      toast.error('Initialization Failed', {
+        description: 'Could not initialize WalletConnect',
+      });
+    }
+  };
 
-          // Authenticate with backend
-          authenticateWithBackend(accountId, hashconnect);
-        }
+  const handlePairingEvent = (data: SessionData) => {
+    console.log('Pairing approved:', data);
+    
+    // Stop connecting state
+    setIsConnecting(false);
+    
+    if (data.accountIds && data.accountIds.length > 0) {
+      const accountId = data.accountIds[0];
+      setWalletState({
+        isConnected: true,
+        accountId,
       });
 
-      toast.info('Opening HashPack...', {
-        description: 'Please approve the connection in your wallet',
-        duration: 10000,
+      toast.success('Wallet Connected!', {
+        description: `Account: ${accountId}`,
       });
 
-      // Connect to local wallet (opens HashPack)
-      await hashconnect.connectToLocalWallet();
+      // Authenticate with backend
+      authenticateWithBackend(accountId);
+    }
+  };
+
+  const connectHashPack = useCallback(async () => {
+    if (!hashConnect) {
+      toast.error('HashConnect not initialized', {
+        description: 'Please refresh the page and try again',
+      });
+      return;
+    }
+
+    setIsConnecting(true);
+
+    try {
+      console.log('Opening pairing modal...');
+      console.log('HashConnect state:', {
+        connectedAccountIds: hashConnect.connectedAccountIds,
+        pairingString: hashConnect.pairingString,
+      });
+      
+      // According to HashConnect docs:
+      // "If the HashPack extension is found during init, it will automatically pop it up and request pairing."
+      // openPairingModal() will show QR code for mobile OR trigger extension popup
+      await hashConnect.openPairingModal();
+
+      toast.info('Waiting for connection...', {
+        description: 'Approve in HashPack extension or scan QR code with mobile app',
+        duration: 20000,
+      });
 
     } catch (error: any) {
-      console.error('Failed to connect to HashPack:', error);
-      
-      let errorMessage = 'Please try again';
-      let errorTitle = 'Connection Failed';
-      
-      if (error.message?.includes('initialize')) {
-        errorMessage = 'Failed to initialize HashConnect. Please refresh the page and try again.';
-      } else if (error.message) {
-        errorMessage = error.message;
-      }
-      
-      toast.error(errorTitle, {
-        description: errorMessage,
-        duration: 5000,
+      console.error('Failed to open pairing modal:', error);
+      toast.error('Connection Failed', {
+        description: error.message || 'Please try again',
       });
       setIsConnecting(false);
     }
-  }, [hashPackFound]);
+  }, [hashConnect]);
 
-  // Authenticate with backend
-  const authenticateWithBackend = useCallback(async (accountId: string, hashconnect: any) => {
+  const authenticateWithBackend = useCallback(async (accountId: string) => {
+    if (!hashConnect) {
+      console.error('HashConnect not available');
+      return;
+    }
+
     try {
-      // Create a message to sign
       const timestamp = Date.now();
       const message = `Hedera Flow Authentication\nAccount: ${accountId}\nTimestamp: ${timestamp}`;
-      
+
       toast.info('Requesting signature...', {
         description: 'Please sign the message in HashPack',
       });
 
-      // Sign message
-      const signResult = await hashconnect.signMessage(message);
-      console.log('Sign result:', signResult);
+      console.log('Requesting signature for:', message);
 
-      if (!signResult || !signResult.signature) {
+      // Get the signer for this account
+      const signer = hashConnect.getSigner(hashConnect.connectedAccountIds[0]);
+      
+      // Sign the message
+      const signerSignatures = await signer.sign([Buffer.from(message)]);
+
+      console.log('Sign result:', signerSignatures);
+
+      if (!signerSignatures || signerSignatures.length === 0) {
         throw new Error('No signature received from wallet');
       }
 
-      const signature = signResult.signature;
+      // Get the first signature
+      const signerSignature = signerSignatures[0];
+      
+      // Convert signature to base64 for backend
+      const signatureBytes = signerSignature.signature;
+      const signatureBase64 = Buffer.from(signatureBytes).toString('base64');
 
       toast.info('Verifying signature...', {
         description: 'Authenticating with backend',
       });
 
-      // Send to backend for verification
       const response = await authApi.walletConnect({
         hedera_account_id: accountId,
-        signature,
+        signature: signatureBase64,
         message,
       });
 
-      // Store token
       localStorage.setItem('auth_token', response.token);
       localStorage.setItem('user', JSON.stringify(response.user));
 
       toast.success('Successfully authenticated!', {
         description: 'Redirecting to dashboard...',
       });
-      
+
       setIsConnecting(false);
-      
-      // Redirect to home
+
       setTimeout(() => {
         window.location.href = '/';
       }, 1000);
@@ -222,19 +210,30 @@ export const useHashPackDirect = () => {
       console.error('Backend authentication failed:', error);
       toast.error('Authentication Failed', {
         description: error.response?.data?.detail || error.message || 'Please try again',
-        duration: 5000,
       });
       setIsConnecting(false);
     }
-  }, []);
+  }, [hashConnect]);
+
+  const disconnect = useCallback(async () => {
+    if (hashConnect) {
+      await hashConnect.disconnect();
+    }
+    setWalletState({ isConnected: false, accountId: null });
+  }, [hashConnect]);
 
   return {
     walletState,
     isConnecting,
-    isHashPackInstalled: hashPackFound,
+    isHashPackInstalled: true, // Always true since it's WalletConnect-based
     connectHashPack,
-    disconnect: () => {
-      setWalletState({ isConnected: false, accountId: null });
+    disconnect,
+    pairingString,
+    recheckHashPack: () => {
+      toast.info('HashPack uses WalletConnect', {
+        description: 'Click Connect to scan QR code or copy pairing string',
+      });
+      return true;
     },
   };
 };

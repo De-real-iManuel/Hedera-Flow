@@ -78,8 +78,10 @@ class HashPackWallet {
    */
   async initialize(): Promise<boolean> {
     try {
-      // Check if HashPack extension is installed
-      if (!this.isHashPackInstalled()) {
+      // Wait for HashPack extension to load (up to 3 seconds)
+      const isAvailable = await this.waitForHashPack(3000);
+      
+      if (!isAvailable) {
         toast.error('HashPack wallet not found', {
           description: 'Please install the HashPack browser extension to continue.',
           action: {
@@ -91,6 +93,7 @@ class HashPackWallet {
       }
 
       this.isInitialized = true;
+      console.log('✓ HashPack wallet detected and initialized');
       return true;
     } catch (error) {
       console.error('Failed to initialize HashPack:', error);
@@ -105,6 +108,23 @@ class HashPackWallet {
   private isHashPackInstalled(): boolean {
     // HashPack injects itself into window.hashpack
     return typeof window !== 'undefined' && window.hashpack !== undefined;
+  }
+
+  /**
+   * Wait for HashPack to be available (with timeout)
+   */
+  private async waitForHashPack(timeoutMs: number = 3000): Promise<boolean> {
+    const startTime = Date.now();
+    
+    while (Date.now() - startTime < timeoutMs) {
+      if (this.isHashPackInstalled()) {
+        return true;
+      }
+      // Wait 100ms before checking again
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    
+    return false;
   }
 
   /**

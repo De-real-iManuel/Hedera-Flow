@@ -11,10 +11,7 @@ export default defineConfig(({ mode }) => ({
     hmr: {
       overlay: false,
     },
-    headers: {
-      // Allow HashConnect to work by relaxing CSP for development
-      'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://*.hedera.com https://*.hashpack.app wss://*.hashpack.app https://api.coingecko.com https://pro-api.coinmarketcap.com http://localhost:8000;",
-    },
+
   },
   plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
   resolve: {
@@ -22,6 +19,8 @@ export default defineConfig(({ mode }) => ({
       "@": path.resolve(__dirname, "./src"),
       // Add buffer polyfill for HashConnect
       buffer: 'buffer',
+      // Fix @hiero-ledger/proto resolution to absolute path
+      '@hiero-ledger/proto': path.resolve(__dirname, './node_modules/@hashgraph/proto'),
     },
   },
   define: {

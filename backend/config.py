@@ -3,6 +3,17 @@ Configuration management using Pydantic Settings
 """
 from pydantic_settings import BaseSettings
 from typing import Optional
+import logging
+import os
+
+# Suppress verbose Java/Jnius logging early
+logging.getLogger('kivy.jnius.reflect').setLevel(logging.ERROR)
+logging.getLogger('kivy.jnius').setLevel(logging.ERROR)
+logging.getLogger('jnius').setLevel(logging.ERROR)
+
+# Set environment variables to suppress Java logging
+os.environ.setdefault('JNIUS_DEBUG', '0')
+os.environ.setdefault('KIVY_LOG_LEVEL', 'error')
 
 
 class Settings(BaseSettings):
@@ -69,7 +80,8 @@ class Settings(BaseSettings):
     fraud_score_threshold: float = 0.70
     
     # CORS Configuration
-    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080"
+    # Includes localhost and common local network IPs for mobile testing
+    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080,http://192.168.1.100:5173,http://192.168.1.100:8080,http://10.0.0.100:5173,http://10.0.0.100:8080"
     cors_allow_credentials: bool = True
     cors_allow_methods: str = "*"
     cors_allow_headers: str = "*"
@@ -82,3 +94,11 @@ class Settings(BaseSettings):
 
 # Global settings instance
 settings = Settings()
+
+# Set Google Cloud credentials environment variable if configured
+if settings.google_application_credentials:
+    import os
+    os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = settings.google_application_credentials
+    print(f"Set GOOGLE_APPLICATION_CREDENTIALS to: {settings.google_application_credentials}")
+else:
+    print("Warning: GOOGLE_APPLICATION_CREDENTIALS not configured in .env file")

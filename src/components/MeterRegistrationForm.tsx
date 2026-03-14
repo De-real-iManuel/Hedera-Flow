@@ -45,6 +45,13 @@ export function MeterRegistrationForm({ onSuccess, onCancel }: MeterRegistration
     stateProvince
   );
   
+  // Debug logging
+  useEffect(() => {
+    console.log('Providers data:', providers);
+    console.log('Loading providers:', loadingProviders);
+    console.log('State province:', stateProvince);
+  }, [providers, loadingProviders, stateProvince]);
+  
   // Success state
   const [showSuccess, setShowSuccess] = useState(false);
   
@@ -89,29 +96,34 @@ export function MeterRegistrationForm({ onSuccess, onCancel }: MeterRegistration
       return;
     }
     
-    createMeter(
-      {
-        meter_id: meterId,
-        utility_provider_id: utilityProviderId,
-        state_province: stateProvince,
-        utility_provider: selectedProvider.provider_name,
-        meter_type: meterType,
-        band_classification: bandClassification || undefined,
-        address: address || undefined,
-        is_primary: isPrimary,
+    const meterData = {
+      meter_id: meterId,
+      utility_provider_id: utilityProviderId,
+      state_province: stateProvince,
+      utility_provider: selectedProvider.provider_name,
+      meter_type: meterType,
+      ...(bandClassification && { band_classification: bandClassification }),
+      ...(address && { address: address }),
+      is_primary: isPrimary,
+    };
+    
+    console.log('Submitting meter data:', meterData);
+    
+    createMeter(meterData, {
+      onSuccess: () => {
+        setShowSuccess(true);
+        setTimeout(() => {
+          setShowSuccess(false);
+          if (onSuccess) {
+            onSuccess();
+          }
+        }, 2000);
       },
-      {
-        onSuccess: () => {
-          setShowSuccess(true);
-          setTimeout(() => {
-            setShowSuccess(false);
-            if (onSuccess) {
-              onSuccess();
-            }
-          }, 2000);
-        },
-      }
-    );
+      onError: (error: any) => {
+        console.error('Meter creation error:', error);
+        console.error('Error response:', error.response?.data);
+      },
+    });
   };
   
   const isNigeria = user?.country_code === 'NG';
@@ -307,7 +319,11 @@ export function MeterRegistrationForm({ onSuccess, onCancel }: MeterRegistration
             <Alert variant="destructive">
               <AlertCircle className="h-4 w-4" />
               <AlertDescription>
-                {createError instanceof Error ? createError.message : 'Failed to register meter'}
+                {typeof createError === 'object' && 'response' in createError 
+                  ? JSON.stringify((createError as any).response?.data?.detail || createError)
+                  : createError instanceof Error 
+                  ? createError.message 
+                  : 'Failed to register meter'}
               </AlertDescription>
             </Alert>
           )}

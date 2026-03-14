@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PrepaidTokenPurchase } from '@/components/PrepaidTokenPurchase';
+import { TransactionHistory } from '@/components/TransactionHistory';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -147,56 +148,11 @@ export default function PrepaidPage() {
 
             {/* History Tab */}
             <TabsContent value="history" className="space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Token History</CardTitle>
-                  <CardDescription>View all your purchased tokens</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {isLoading ? (
-                    <div className="text-center py-12">
-                      <Clock className="w-16 h-16 mx-auto mb-4 text-muted-foreground animate-spin" />
-                      <p className="text-muted-foreground">Loading tokens...</p>
-                    </div>
-                  ) : !tokens || tokens.length === 0 ? (
-                    <div className="text-center py-12">
-                      <Clock className="w-16 h-16 mx-auto mb-4 text-muted-foreground" />
-                      <p className="text-muted-foreground">No tokens purchased yet</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {tokens.map((token) => (
-                        <Card key={token.id} className="hover:shadow-md transition-shadow">
-                          <CardContent className="p-4">
-                            <div className="flex items-center justify-between">
-                              <div className="flex-1">
-                                <div className="flex items-center gap-2 mb-1">
-                                  <p className="font-mono font-semibold">{token.token_id}</p>
-                                  <Badge className={getStatusColor(token.status)}>
-                                    {token.status}
-                                  </Badge>
-                                </div>
-                                <p className="text-sm text-muted-foreground">
-                                  {token.units_remaining} / {token.units_purchased} kWh remaining
-                                </p>
-                                <p className="text-xs text-muted-foreground mt-1">
-                                  Purchased: {new Date(token.created_at).toLocaleDateString()}
-                                </p>
-                              </div>
-                              <div className="text-right">
-                                <p className="font-semibold">{token.amount_hbar} ℏ</p>
-                                <p className="text-sm text-muted-foreground">
-                                  {token.amount_fiat} {token.currency}
-                                </p>
-                              </div>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
+              <TransactionHistory 
+                meterId={selectedMeterId || undefined}
+                showFilters={true}
+                pageSize={20}
+              />
             </TabsContent>
           </Tabs>
         )}

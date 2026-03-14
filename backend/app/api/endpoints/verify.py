@@ -9,7 +9,8 @@ from typing import Optional
 from decimal import Decimal
 import logging
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
+from datetime import timezone
 import uuid
 
 from app.core.database import get_db
@@ -93,7 +94,7 @@ async def create_verification(
         500: Internal server error
     """
     try:
-        logger.info(f"Starting verification for meter {meter_id} by user {current_user['user_id']}")
+        logger.info(f"Starting verification for meter {meter_id} by user {current_user.id}")
         
         # Step 1: Validate meter exists and belongs to user
         meter_query = text("""
@@ -104,11 +105,11 @@ async def create_verification(
         
         meter_result = db.execute(
             meter_query,
-            {"meter_id": meter_id, "user_id": current_user['user_id']}
+            {"meter_id": meter_id, "user_id": current_user.id}
         ).fetchone()
         
         if not meter_result:
-            logger.warning(f"Meter {meter_id} not found for user {current_user['user_id']}")
+            logger.warning(f"Meter {meter_id} not found for user {current_user.id}")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Meter not found or not owned by user"
@@ -188,7 +189,7 @@ async def create_verification(
         
         previous_result = db.execute(
             previous_reading_query,
-            {"meter_id": meter_id, "user_id": current_user['user_id']}
+            {"meter_id": meter_id, "user_id": current_user.id}
         ).fetchone()
         
         previous_reading = Decimal(str(previous_result[0])) if previous_result else None
@@ -213,14 +214,14 @@ async def create_verification(
         
         historical_results = db.execute(
             historical_query,
-            {"meter_id": meter_id, "user_id": current_user['user_id']}
+            {"meter_id": meter_id, "user_id": current_user.id}
         ).fetchall()
         
         previous_readings = [float(row[0]) for row in historical_results]
         
         # Extract image metadata (simplified for MVP)
         metadata = {
-            'timestamp': datetime.now(datetime.UTC).isoformat(),
+            'timestamp': datetime.now(timezone.utc).isoformat(),
             'filename': image.filename,
             'content_type': image.content_type,
             'size': len(image_bytes)
@@ -234,7 +235,9 @@ async def create_verification(
         )
         
         fraud_score = Decimal(str(fraud_result['fraud_score']))
-        fraud_flags = fraud_result.get('flags', [])
+        fraud_flags_list = fraud_result.get('flags', [])
+        # Convert list of flags to dictionary format for schema compatibility
+        fraud_flags = {flag: True for flag in fraud_flags_list} if fraud_flags_list else {}
         
         logger.info(f"Fraud detection complete: score={fraud_score}, flags={fraud_flags}")
         
@@ -261,7 +264,7 @@ async def create_verification(
             # Upload image to IPFS
             ipfs_result = ipfs_service.upload_image(
                 image_bytes=image_bytes,
-                filename=f"meter_{meter_data['meter_id']}_{datetime.now(datetime.UTC).strftime('%Y%m%d_%H%M%S')}.jpg"
+                filename=f"meter_{meter_data['meter_id']}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.jpg"
             )
             
             image_ipfs_hash = ipfs_result['ipfs_url']  # ipfs://hash format
@@ -284,7 +287,7 @@ async def create_verification(
         
         user_country_result = db.execute(
             user_country_query,
-            {"user_id": current_user['user_id']}
+            {"user_id": current_user.id}
         ).fetchone()
         
         country_code = user_country_result[0] if user_country_result else 'ES'
@@ -300,8 +303,8 @@ async def create_verification(
                 
                 hcs_message = {
                     'type': 'VERIFICATION',
-                    'timestamp': int(datetime.now(datetime.UTC).timestamp()),
-                    'user_id': str(current_user['user_id'])[:8] + '...',  # Anonymized
+                    'timestamp': int(datetime.now(timezone.utc).timestamp()),
+                    'user_id': str(current_user.id)[:8] + '...',  # Anonymized
                     'meter_id': meter_data['meter_id'],
                     'reading': float(reading_value),
                     'utility_reading': None,  # Not available in MVP
@@ -317,7 +320,7 @@ async def create_verification(
                 )
                 
                 hcs_sequence_number = hcs_result['sequence_number']
-                hcs_timestamp = datetime.now(datetime.UTC)
+                hcs_timestamp = datetime.now(timezone.utc)
                 
                 logger.info(f"HCS logging successful: sequence={hcs_sequence_number}")
                 
@@ -352,7 +355,7 @@ async def create_verification(
             insert_query,
             {
                 'id': verification_id,
-                'user_id': uuid.UUID(current_user['user_id']),
+                'user_id': current_user.id,
                 'meter_id': uuid.UUID(meter_id),
                 'reading_value': reading_value,
                 'previous_reading': previous_reading,
@@ -369,7 +372,7 @@ async def create_verification(
                 'hcs_topic_id': hcs_topic_id,
                 'hcs_sequence_number': hcs_sequence_number,
                 'hcs_timestamp': hcs_timestamp,
-                'created_at': datetime.now(datetime.UTC)
+                'created_at': datetime.now(timezone.utc)
             }
         )
         
@@ -397,7 +400,7 @@ async def create_verification(
                 
                 user_info = db.execute(
                     user_query,
-                    {"meter_id": meter_id, "user_id": current_user['user_id']}
+                    {"meter_id": meter_id, "user_id": current_user.id}
                 ).fetchone()
                 
                 if not user_info:
@@ -417,7 +420,7 @@ async def create_verification(
                         band_classification=band_classification,
                         include_platform_fee=True,
                         use_cache=True,
-                        user_id=current_user['user_id']
+                        user_id=current_user.id
                     )
                     
                     logger.info(f"Bill calculated: {bill_result['total_fiat']} {bill_result['currency']}")
@@ -427,7 +430,7 @@ async def create_verification(
                         hbar_price = get_hbar_price(db, bill_result['currency'], use_cache=True)
                         amount_hbar = Decimal(str(bill_result['total_fiat'])) / Decimal(str(hbar_price))
                         exchange_rate = Decimal(str(hbar_price))
-                        exchange_rate_timestamp = datetime.now(datetime.UTC)
+                        exchange_rate_timestamp = datetime.now(timezone.utc)
                         
                         logger.info(f"HBAR conversion: {amount_hbar} HBAR at rate {exchange_rate} {bill_result['currency']}/HBAR")
                     except Exception as e:
@@ -463,7 +466,7 @@ async def create_verification(
                         insert_bill_query,
                         {
                             'id': bill_id,
-                            'user_id': uuid.UUID(current_user['user_id']),
+                            'user_id': current_user.id,
                             'meter_id': uuid.UUID(meter_id),
                             'verification_id': verification_id,
                             'consumption_kwh': bill_result['consumption_kwh'],
@@ -478,7 +481,7 @@ async def create_verification(
                             'exchange_rate': exchange_rate,
                             'exchange_rate_timestamp': exchange_rate_timestamp,
                             'status': 'pending',
-                            'created_at': datetime.now(datetime.UTC)
+                            'created_at': datetime.now(timezone.utc)
                         }
                     )
                     
@@ -517,7 +520,7 @@ async def create_verification(
             confidence=verification_row[8],
             raw_ocr_text=verification_row[9],
             fraud_score=verification_row[10],
-            fraud_flags=json.loads(verification_row[11]) if verification_row[11] else {},
+            fraud_flags=verification_row[11] if isinstance(verification_row[11], (dict, list)) else (json.loads(verification_row[11]) if verification_row[11] else {}),
             utility_reading=verification_row[12],
             utility_api_response=verification_row[13],
             status=VerificationStatus(verification_row[14]),

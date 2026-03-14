@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Check, AlertTriangle, Info, Shield, RotateCcw, XCircle, Eye, ExternalLink } from "lucide-react";
+import { Check, AlertTriangle, Info, Shield, RotateCcw, XCircle, Eye, ExternalLink, Receipt, Download } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -70,6 +70,18 @@ interface VerificationResultProps {
 export function VerificationResult({ data, onRetry, onPay }: VerificationResultProps) {
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   
+  // Helper function to safely format fraud score
+  const formatFraudScore = (score: number | string): string => {
+    const numScore = typeof score === 'string' ? parseFloat(score) : score;
+    return isNaN(numScore) ? '0.00' : numScore.toFixed(2);
+  };
+  
+  // Helper function to get numeric fraud score
+  const getNumericFraudScore = (): number => {
+    const numScore = typeof data.fraudScore === 'string' ? parseFloat(data.fraudScore) : data.fraudScore;
+    return isNaN(numScore) ? 0 : numScore;
+  };
+  
   const getStatusConfig = () => {
     switch (data.status) {
       case 'VERIFIED':
@@ -129,14 +141,16 @@ export function VerificationResult({ data, onRetry, onPay }: VerificationResultP
   const StatusIcon = statusConfig.icon;
   
   const getFraudScoreColor = () => {
-    if (data.fraudScore < 0.3) return 'bg-green-500';
-    if (data.fraudScore < 0.7) return 'bg-yellow-500';
+    const score = getNumericFraudScore();
+    if (score < 0.3) return 'bg-green-500';
+    if (score < 0.7) return 'bg-yellow-500';
     return 'bg-red-500';
   };
   
   const getFraudScoreLabel = () => {
-    if (data.fraudScore < 0.3) return 'Low Risk';
-    if (data.fraudScore < 0.7) return 'Medium Risk';
+    const score = getNumericFraudScore();
+    if (score < 0.3) return 'Low Risk';
+    if (score < 0.7) return 'Medium Risk';
     return 'High Risk';
   };
 
@@ -271,24 +285,24 @@ export function VerificationResult({ data, onRetry, onPay }: VerificationResultP
       </Card>
 
       {/* Fraud Score Indicator - Show if applicable */}
-      {(data.fraudScore > 0 || (data.fraudFlags && data.fraudFlags.length > 0) || 
+      {(getNumericFraudScore() > 0 || (data.fraudFlags && data.fraudFlags.length > 0) || 
         ['WARNING', 'DISCREPANCY', 'FRAUD_DETECTED'].includes(data.status)) && (
         <Card className="border-2">
           <CardContent className="p-4 space-y-2">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Shield className={`w-4 h-4 ${data.fraudScore < 0.3 ? 'text-green-600' : data.fraudScore < 0.7 ? 'text-yellow-600' : 'text-red-600'}`} />
+                <Shield className={`w-4 h-4 ${getNumericFraudScore() < 0.3 ? 'text-green-600' : getNumericFraudScore() < 0.7 ? 'text-yellow-600' : 'text-red-600'}`} />
                 <span className="text-sm font-medium text-foreground">Fraud Score</span>
               </div>
-              <span className={`text-sm font-semibold ${data.fraudScore < 0.3 ? 'text-green-600' : data.fraudScore < 0.7 ? 'text-yellow-600' : 'text-red-600'}`}>
-                {data.fraudScore.toFixed(2)} ({getFraudScoreLabel()})
+              <span className={`text-sm font-semibold ${getNumericFraudScore() < 0.3 ? 'text-green-600' : getNumericFraudScore() < 0.7 ? 'text-yellow-600' : 'text-red-600'}`}>
+                {formatFraudScore(data.fraudScore)} ({getFraudScoreLabel()})
               </span>
             </div>
             
             <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
               <div 
                 className={`h-full ${getFraudScoreColor()} rounded-full transition-all duration-500`}
-                style={{ width: `${data.fraudScore * 100}%` }}
+                style={{ width: `${getNumericFraudScore() * 100}%` }}
               />
             </div>
             
@@ -387,10 +401,10 @@ export function VerificationResult({ data, onRetry, onPay }: VerificationResultP
                 <div className="flex justify-between items-center">
                   <span className="text-muted-foreground">Fraud Score:</span>
                   <div className="flex items-center gap-2">
-                    <span className={`font-semibold ${data.fraudScore < 0.3 ? 'text-green-600' : data.fraudScore < 0.7 ? 'text-yellow-600' : 'text-red-600'}`}>
-                      {data.fraudScore.toFixed(2)}
+                    <span className={`font-semibold ${getNumericFraudScore() < 0.3 ? 'text-green-600' : getNumericFraudScore() < 0.7 ? 'text-yellow-600' : 'text-red-600'}`}>
+                      {formatFraudScore(data.fraudScore)}
                     </span>
-                    <Badge variant={data.fraudScore < 0.3 ? 'default' : data.fraudScore < 0.7 ? 'secondary' : 'destructive'}>
+                    <Badge variant={getNumericFraudScore() < 0.3 ? 'default' : getNumericFraudScore() < 0.7 ? 'secondary' : 'destructive'}>
                       {getFraudScoreLabel()}
                     </Badge>
                   </div>
@@ -398,7 +412,7 @@ export function VerificationResult({ data, onRetry, onPay }: VerificationResultP
                 <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
                   <div 
                     className={`h-full ${getFraudScoreColor()} rounded-full transition-all duration-500`}
-                    style={{ width: `${data.fraudScore * 100}%` }}
+                    style={{ width: `${getNumericFraudScore() * 100}%` }}
                   />
                 </div>
                 {data.fraudFlags && data.fraudFlags.length > 0 ? (
@@ -564,8 +578,9 @@ export function VerificationResult({ data, onRetry, onPay }: VerificationResultP
             size="lg"
             onClick={onPay}
             className="w-full"
+            disabled={!onPay}
           >
-            Pay {formatCurrency(data.bill.total, data.bill.currency)}
+            {!onPay ? "Processing..." : `Pay ${formatCurrency(data.bill.total, data.bill.currency)}`}
           </Button>
         )}
       </div>

@@ -16,9 +16,16 @@ import VerifyEmailPage from "./pages/VerifyEmailPage";
 import RegisterMeterPage from "./pages/RegisterMeterPage";
 import MetersPage from "./pages/MetersPage";
 import VerificationTestPage from "./pages/VerificationTestPage";
+import PrepaidPage from "./pages/PrepaidPage";
+import PrepaidSmartMeterPage from "./pages/PrepaidSmartMeterPage";
+import PrepaidMeterPage from "./pages/PrepaidMeterPage";
+import SmartMeterPage from "./pages/SmartMeterPage";
+import MeterHubPage from "./pages/MeterHubPage";
 import BottomNav from "./components/BottomNav";
 import SplashScreen from "./components/SplashScreen";
 import LandingPage from "./pages/LandingPage";
+import AuthGuard from "./components/AuthGuard";
+import LoginTestPage from "./pages/LoginTestPage";
 
 const queryClient = new QueryClient();
 
@@ -58,17 +65,26 @@ const AppContent = () => {
       <div className="max-w-lg mx-auto relative min-h-screen">
         <Routes>
           <Route path="/" element={<LandingPage />} />
-          <Route path="/home" element={<HomePage />} />
           <Route path="/auth" element={<AuthPage />} />
+          <Route path="/login-test" element={<LoginTestPage />} />
           <Route path="/verify-email" element={<VerifyEmailPage />} />
-          <Route path="/register-meter" element={<RegisterMeterPage />} />
-          <Route path="/meters" element={<MetersPage />} />
-          <Route path="/scan" element={<ScanPage />} />
-          <Route path="/bills" element={<BillsPage />} />
-          <Route path="/history" element={<HistoryPage />} />
-          <Route path="/profile" element={<ProfilePage />} />
-          <Route path="/api-test" element={<ApiTestPage />} />
-          <Route path="/verification-test" element={<VerificationTestPage />} />
+          
+          {/* Protected Routes */}
+          <Route path="/home" element={<AuthGuard><HomePage /></AuthGuard>} />
+          <Route path="/register-meter" element={<AuthGuard><RegisterMeterPage /></AuthGuard>} />
+          <Route path="/meters" element={<AuthGuard><MetersPage /></AuthGuard>} />
+          <Route path="/meter-hub" element={<AuthGuard><MeterHubPage /></AuthGuard>} />
+          <Route path="/prepaid" element={<AuthGuard><PrepaidPage /></AuthGuard>} />
+          <Route path="/prepaid-meter" element={<AuthGuard><PrepaidMeterPage /></AuthGuard>} />
+          <Route path="/smart-meter" element={<AuthGuard><SmartMeterPage /></AuthGuard>} />
+          <Route path="/prepaid-smart-meter" element={<AuthGuard><PrepaidSmartMeterPage /></AuthGuard>} />
+          <Route path="/scan" element={<AuthGuard><ScanPage /></AuthGuard>} />
+          <Route path="/bills" element={<AuthGuard><BillsPage /></AuthGuard>} />
+          <Route path="/history" element={<AuthGuard><HistoryPage /></AuthGuard>} />
+          <Route path="/profile" element={<AuthGuard><ProfilePage /></AuthGuard>} />
+          <Route path="/api-test" element={<AuthGuard><ApiTestPage /></AuthGuard>} />
+          <Route path="/verification-test" element={<AuthGuard><VerificationTestPage /></AuthGuard>} />
+          
           <Route path="*" element={<NotFound />} />
         </Routes>
         {shouldShowNav && <BottomNav />}

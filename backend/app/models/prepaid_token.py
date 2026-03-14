@@ -50,6 +50,7 @@ class PrepaidToken(Base):
     
     # Token Identification
     token_id = Column(String(50), nullable=False, unique=True, index=True)
+    sts_token = Column(String(25), nullable=True, index=True)  # 20-digit STS token (XXXX-XXXX-XXXX-XXXX-XXXX)
     
     # Foreign Keys
     user_id = Column(

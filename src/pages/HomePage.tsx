@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { ScanLine, CreditCard, Clock, Zap, TrendingUp, Calendar } from "lucide-react";
+import { ScanLine, CreditCard, Clock, Zap, TrendingUp, Calendar, Shield } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import AppHeader from "@/components/AppHeader";
@@ -108,7 +108,7 @@ const HomePage = () => {
         <motion.div {...fade(0.2)} className="grid grid-cols-3 gap-3">
           {[
             { icon: ScanLine, label: "Scan Meter", path: "/scan", accent: true },
-            { icon: CreditCard, label: "Pay Bill", path: "/bills", accent: false },
+            { icon: Zap, label: "Prepaid", path: "/meter-hub", accent: false },
             { icon: Clock, label: "History", path: "/history", accent: false },
           ].map(({ icon: Icon, label, path, accent }) => (
             <button
@@ -141,25 +141,40 @@ const HomePage = () => {
                 <p className="text-xs text-muted-foreground">Register your electricity meter to get started</p>
               </div>
               <button
-                onClick={() => navigate('/meters')}
+                onClick={() => navigate('/register-meter')}
                 className="text-xs font-medium text-accent hover:underline"
               >
                 Add
               </button>
             </div>
             <div className="glass-card p-3.5 flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 bg-accent/10">
-                <Zap className="w-4 h-4 text-accent" />
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 bg-purple-500/10">
+                <Zap className="w-4 h-4 text-purple-600" />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-foreground">Scan Your Reading</p>
-                <p className="text-xs text-muted-foreground">Use AI to verify your meter reading</p>
+                <p className="text-sm font-medium text-foreground">Buy Prepaid Tokens</p>
+                <p className="text-xs text-muted-foreground">Purchase electricity with HBAR</p>
               </div>
               <button
-                onClick={() => navigate('/scan')}
-                className="text-xs font-medium text-accent hover:underline"
+                onClick={() => navigate('/prepaid-meter')}
+                className="text-xs font-medium text-purple-600 hover:underline"
               >
-                Scan
+                Buy
+              </button>
+            </div>
+            <div className="glass-card p-3.5 flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 bg-blue-500/10">
+                <Shield className="w-4 h-4 text-blue-600" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-foreground">Smart Meter Verification</p>
+                <p className="text-xs text-muted-foreground">Verify consumption with cryptographic signatures</p>
+              </div>
+              <button
+                onClick={() => navigate('/smart-meter')}
+                className="text-xs font-medium text-blue-600 hover:underline"
+              >
+                Verify
               </button>
             </div>
           </div>

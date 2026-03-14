@@ -71,7 +71,7 @@ def setup_rate_limiting(app) -> None:
     
     # Log configuration
     if settings.debug:
-        print(f"⏱️  Rate limiting configured:")
+        print(f"[RATE LIMIT] Rate limiting configured:")
         print(f"   - Limit: {settings.rate_limit_per_minute} requests/minute")
         print(f"   - Strategy: fixed-window")
         print(f"   - Storage: Memory (in-process)")

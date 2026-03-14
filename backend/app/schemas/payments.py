@@ -111,3 +111,14 @@ class InsufficientBalanceResponse(BaseModel):
     current_balance: Decimal
     deficit_hbar: Decimal
     top_up_instructions: dict  # Links to exchanges, QR code, etc.
+
+
+class PaymentFailureResponse(BaseModel):
+    """Response when payment fails"""
+    error: str
+    failure_type: Literal["transient", "permanent"]
+    failure_reason: str
+    retry_count: int = 0
+    max_retries: int = 3
+    can_retry: bool
+    details: Optional[dict] = None

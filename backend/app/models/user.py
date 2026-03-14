@@ -103,6 +103,7 @@ class User(Base):
     # Relationships
     bills = relationship("Bill", back_populates="user", cascade="all, delete-orphan")
     meters = relationship("Meter", back_populates="user", cascade="all, delete-orphan")
+    prepaid_tokens = relationship("PrepaidToken", back_populates="user", cascade="all, delete-orphan")
     
     def __repr__(self):
         return f"<User(id={self.id}, email={self.email}, country={self.country_code})>"

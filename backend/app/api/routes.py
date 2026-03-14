@@ -4,7 +4,7 @@ Aggregates all API route modules
 """
 from fastapi import APIRouter
 
-from app.api.endpoints import health, auth, meters, bills, payments, utility_providers, verify, subsidies, exchange_rates, user
+from app.api.endpoints import health, auth, meters, bills, payments, utility_providers, verify, subsidies, exchange_rates, user, prepaid, smart_meter
 
 # Create main API router
 api_router = APIRouter()
@@ -48,6 +48,18 @@ api_router.include_router(
     payments.router,
     prefix="/payments",
     tags=["payments"]
+)
+
+api_router.include_router(
+    prepaid.router,
+    prefix="/prepaid",
+    tags=["prepaid"]
+)
+
+api_router.include_router(
+    smart_meter.router,
+    prefix="/smart-meter",
+    tags=["smart-meter"]
 )
 
 api_router.include_router(

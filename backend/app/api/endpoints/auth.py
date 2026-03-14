@@ -656,3 +656,134 @@ async def get_current_user_endpoint(
         last_login=current_user.last_login,
         is_active=current_user.is_active
     )
+@router.put("/complete-profile", response_model=UserResponse)
+async def complete_profile(
+    first_name: str = Form(..., min_length=1, max_length=100),
+    last_name: str = Form(..., min_length=1, max_length=100),
+    country_code: str = Form(..., pattern=r"^(ES|US|IN|BR|NG)$"),
+    current_user: User = Depends(get_current_user_dependency),
+    db: Session = Depends(get_db)
+):
+    """
+    Complete user profile after wallet-only registration
+
+    This endpoint allows wallet-only users to add their name and country.
+    Required for users who registered via wallet connect without providing
+    personal information.
+
+    Requirements:
+        - Allow wallet users to complete their profile
+        - Update first_name, last_name, and country_code
+
+    Args:
+        first_name: User's first name
+        last_name: User's last name
+        country_code: Country code (ES, US, IN, BR, NG)
+        current_user: Authenticated user
+        db: Database session
+
+    Returns:
+        Updated user data
+
+    Raises:
+        HTTPException 400: Invalid country code
+    """
+    try:
+        # Update user profile
+        current_user.first_name = first_name
+        current_user.last_name = last_name
+        current_user.country_code = CountryCodeEnum[country_code]
+
+        db.commit()
+        db.refresh(current_user)
+
+        logger.info(f"Profile completed for user {current_user.email} (ID: {current_user.id})")
+
+        return UserResponse(
+            id=str(current_user.id),
+            first_name=current_user.first_name,
+            last_name=current_user.last_name,
+            email=current_user.email,
+            country_code=current_user.country_code,
+            hedera_account_id=current_user.hedera_account_id,
+            wallet_type=current_user.wallet_type,
+            created_at=current_user.created_at,
+            last_login=current_user.last_login,
+            is_active=current_user.is_active
+        )
+
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to complete profile: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update profile: {str(e)}"
+        )
+
+
+
+
+
+@router.put("/complete-profile", response_model=UserResponse)
+async def complete_profile(
+    first_name: str = Form(..., min_length=1, max_length=100),
+    last_name: str = Form(..., min_length=1, max_length=100),
+    country_code: str = Form(..., pattern=r"^(ES|US|IN|BR|NG)$"),
+    current_user: User = Depends(get_current_user_dependency),
+    db: Session = Depends(get_db)
+):
+    """
+    Complete user profile after wallet-only registration
+    
+    This endpoint allows wallet-only users to add their name and country.
+    Required for users who registered via wallet connect without providing
+    personal information.
+    
+    Requirements:
+        - Allow wallet users to complete their profile
+        - Update first_name, last_name, and country_code
+    
+    Args:
+        first_name: User's first name
+        last_name: User's last name
+        country_code: Country code (ES, US, IN, BR, NG)
+        current_user: Authenticated user
+        db: Database session
+        
+    Returns:
+        Updated user data
+        
+    Raises:
+        HTTPException 400: Invalid country code
+    """
+    try:
+        # Update user profile
+        current_user.first_name = first_name
+        current_user.last_name = last_name
+        current_user.country_code = CountryCodeEnum[country_code]
+        
+        db.commit()
+        db.refresh(current_user)
+        
+        logger.info(f"Profile completed for user {current_user.email} (ID: {current_user.id})")
+        
+        return UserResponse(
+            id=str(current_user.id),
+            first_name=current_user.first_name,
+            last_name=current_user.last_name,
+            email=current_user.email,
+            country_code=current_user.country_code,
+            hedera_account_id=current_user.hedera_account_id,
+            wallet_type=current_user.wallet_type,
+            created_at=current_user.created_at,
+            last_login=current_user.last_login,
+            is_active=current_user.is_active
+        )
+        
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to complete profile: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update profile: {str(e)}"
+        )

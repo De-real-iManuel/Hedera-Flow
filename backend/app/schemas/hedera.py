@@ -16,6 +16,8 @@ class HCSMessageType(str, Enum):
     PAYMENT = "PAYMENT"
     DISPUTE_CREATED = "DISPUTE_CREATED"
     DISPUTE_RESOLVED = "DISPUTE_RESOLVED"
+    PREPAID_TOKEN_ISSUED = "PREPAID_TOKEN_ISSUED"
+    SMART_METER_CONSUMPTION = "SMART_METER_CONSUMPTION"
 
 
 class HCSTopicRegion(str, Enum):
@@ -77,6 +79,39 @@ class DisputeResolvedLogMessage(BaseModel):
     resolution_notes: str
     escrow_released_hbar: Decimal
     status: str
+
+
+class PrepaidTokenIssuedLogMessage(BaseModel):
+    """Prepaid token issuance log message for HCS"""
+    type: str = "PREPAID_TOKEN_ISSUED"
+    token_id: str
+    user_id: str  # Anonymized
+    meter_id: str
+    units_purchased: float
+    amount_hbar: Optional[float]
+    amount_usdc: Optional[float]
+    amount_fiat: float
+    currency: str
+    exchange_rate: float
+    tariff_rate: float
+    tx_id: str
+    timestamp: int
+
+
+class SmartMeterConsumptionLogMessage(BaseModel):
+    """Smart meter consumption log message for HCS"""
+    type: str = "SMART_METER_CONSUMPTION"
+    meter_id: str
+    consumption_kwh: float
+    timestamp: int
+    reading_before: Optional[float]
+    reading_after: Optional[float]
+    signature: str
+    public_key: str
+    signature_valid: bool
+    token_id: Optional[str]
+    units_deducted: Optional[float]
+    units_remaining: Optional[float]
 
 
 # Hedera Transaction Schemas

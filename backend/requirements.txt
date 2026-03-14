@@ -20,6 +20,9 @@ passlib[bcrypt]==1.7.4
 python-multipart==0.0.6
 pyjwt==2.8.0
 
+# Cryptography (for smart meter signatures)
+cryptography==42.0.5
+
 # Hedera SDK
 hedera-sdk-py==2.21.0  # Official Hedera SDK for Python (wrapper around Java SDK)
 

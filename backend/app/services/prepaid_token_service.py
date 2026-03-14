@@ -24,6 +24,7 @@ import time
 from app.services.tariff_service import get_tariff, TariffNotFoundError
 from app.services.exchange_rate_service import get_hbar_price
 from app.services.hedera_service import get_hedera_service
+from app.services.sts_token_generator import STSTokenGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -473,6 +474,29 @@ class PrepaidTokenService:
 
             # Generate token ID
             token_id = self.generate_token_id(country_code)
+            
+            # Generate STS token (20-digit electricity meter token)
+            sts_generator = STSTokenGenerator(utility_provider=utility_provider, country_code=country_code)
+            
+            # Get meter number from database
+            meter_query = text("SELECT meter_id FROM meters WHERE id = :meter_id")
+            meter_result = self.db.execute(meter_query, {'meter_id': meter_id}).fetchone()
+            
+            if not meter_result:
+                raise PrepaidTokenError(f"Meter not found: {meter_id}")
+            
+            meter_number = meter_result[0]  # This should be the physical meter number
+            
+            # Generate 20-digit STS token
+            sts_token, sts_metadata = sts_generator.generate_token(
+                meter_number=meter_number,
+                units_kwh=units_purchased,
+                amount_paid=amount_fiat,
+                currency=currency
+            )
+            
+            logger.info(f"Generated STS token: {sts_token} for meter {meter_number}")
+            logger.info(f"STS metadata: {sts_metadata}")
 
             # Set expiry to 1 year from now
             issued_at = datetime.utcnow()
@@ -481,7 +505,7 @@ class PrepaidTokenService:
             # Create token record with HCS information
             insert_query = text("""
                 INSERT INTO prepaid_tokens (
-                    id, token_id, user_id, meter_id,
+                    id, token_id, sts_token, user_id, meter_id,
                     units_purchased, units_remaining,
                     amount_paid_hbar, amount_paid_usdc,
                     amount_paid_fiat, currency,
@@ -490,7 +514,7 @@ class PrepaidTokenService:
                     hcs_topic_id, hcs_sequence_number,
                     issued_at, expires_at
                 ) VALUES (
-                    :id, :token_id, :user_id, :meter_id,
+                    :id, :token_id, :sts_token, :user_id, :meter_id,
                     :units_purchased, :units_remaining,
                     :amount_paid_hbar, :amount_paid_usdc,
                     :amount_paid_fiat, :currency,
@@ -499,7 +523,7 @@ class PrepaidTokenService:
                     :hcs_topic_id, :hcs_sequence_number,
                     :issued_at, :expires_at
                 )
-                RETURNING id, token_id, issued_at, expires_at
+                RETURNING id, token_id, sts_token, issued_at, expires_at
             """)
 
             token_uuid = str(uuid.uuid4())
@@ -507,6 +531,7 @@ class PrepaidTokenService:
             params = {
                 'id': token_uuid,
                 'token_id': token_id,
+                'sts_token': sts_token,
                 'user_id': user_id,
                 'meter_id': meter_id,
                 'units_purchased': units_purchased,
@@ -517,7 +542,7 @@ class PrepaidTokenService:
                 'currency': currency,
                 'exchange_rate': exchange_rate,
                 'tariff_rate': tariff_rate,
-                'status': 'active',
+                'status': 'pending',
                 'hedera_tx_id': hedera_tx_id,
                 'hcs_topic_id': hcs_topic_id,
                 'hcs_sequence_number': hcs_sequence_number,
@@ -553,6 +578,7 @@ class PrepaidTokenService:
             return {
                 'id': str(result[0]),
                 'token_id': result[1],
+                'sts_token': result[2],
                 'user_id': user_id,
                 'meter_id': meter_id,
                 'units_purchased': units_purchased,
@@ -563,11 +589,11 @@ class PrepaidTokenService:
                 'currency': currency,
                 'exchange_rate': exchange_rate,
                 'tariff_rate': tariff_rate,
-                'status': 'active',
+                'status': 'pending',
                 'hcs_topic_id': hcs_topic_id,
                 'hcs_sequence_number': hcs_sequence_number,
-                'issued_at': result[2].isoformat(),
-                'expires_at': result[3].isoformat(),
+                'issued_at': result[3],
+                'expires_at': result[4],
                 'transaction': transaction_details
             }
 

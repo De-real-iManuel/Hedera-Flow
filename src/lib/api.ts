@@ -12,6 +12,7 @@ import type {
   PaymentReceipt,
   UtilityProvider,
   ExchangeRate,
+  VerificationResponse,
 } from '@/types/api';
 
 // Auth API
@@ -181,9 +182,17 @@ export const utilityProvidersApi = {
 
 // Verification API (OCR meter scanning)
 export const verificationApi = {
-  scanMeter: async (imageFile: File): Promise<{ reading: number; confidence: number }> => {
+  scanMeter: async (meterId: string, imageFile: File, ocrReading?: number, ocrConfidence?: number): Promise<VerificationResponse> => {
     const formData = new FormData();
+    formData.append('meter_id', meterId);
     formData.append('image', imageFile);
+    
+    if (ocrReading !== undefined) {
+      formData.append('ocr_reading', ocrReading.toString());
+    }
+    if (ocrConfidence !== undefined) {
+      formData.append('ocr_confidence', ocrConfidence.toString());
+    }
     
     const response = await apiClient.post('/verify/scan', formData, {
       headers: {
@@ -209,6 +218,9 @@ export const exchangeRateApi = {
     return response.data;
   },
 };
+
+// Prepaid API
+export { prepaidApi } from './api/prepaid';
 
 // User Profile API
 export interface NotificationPreferences {

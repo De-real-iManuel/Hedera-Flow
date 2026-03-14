@@ -21,20 +21,20 @@ async def lifespan(app: FastAPI):
     Handles startup and shutdown tasks
     """
     # Startup
-    print("🚀 Starting Hedera Flow API...")
-    print(f"📍 Environment: {settings.environment}")
-    print(f"🌐 Network: {settings.hedera_network}")
+    print("Starting Hedera Flow API...")
+    print(f"Environment: {settings.environment}")
+    print(f"Network: {settings.hedera_network}")
     
     # Initialize database connection pool
-    print("💾 Initializing database connection pool...")
+    print("Initializing database connection pool...")
     db_healthy = check_db_connection()
     if db_healthy:
-        print("✅ Database connection pool initialized successfully")
+        print("[OK] Database connection pool initialized successfully")
         stats = get_db_stats()
         print(f"   - Pool size: {stats['pool_size']}")
         print(f"   - Total connections: {stats['total_connections']}")
     else:
-        print("❌ Database connection failed - check DATABASE_URL")
+        print("[ERROR] Database connection failed - check DATABASE_URL")
     
     # TODO: Initialize Redis connection
     # TODO: Verify Hedera network connectivity
@@ -42,12 +42,12 @@ async def lifespan(app: FastAPI):
     yield
     
     # Shutdown
-    print("🛑 Shutting down Hedera Flow API...")
+    print("Shutting down Hedera Flow API...")
     
     # Close database connections
-    print("💾 Closing database connection pool...")
+    print("Closing database connection pool...")
     close_db()
-    print("✅ Database connection pool closed")
+    print("Database connection pool closed")
     
     # TODO: Close Redis connections
 
@@ -119,34 +119,30 @@ def configure_cors(app: FastAPI) -> None:
         # Merge with any custom origins from env
         allowed_origins = list(set(allowed_origins + production_origins))
     
-    # Parse allowed methods
-    if settings.cors_allow_methods == "*":
-        allowed_methods = ["*"]
-    else:
-        allowed_methods = [method.strip() for method in settings.cors_allow_methods.split(",")]
-    
-    # Parse allowed headers
-    if settings.cors_allow_headers == "*":
-        allowed_headers = ["*"]
-    else:
-        allowed_headers = [header.strip() for header in settings.cors_allow_headers.split(",")]
+    # In development, allow all origins for easier testing
+    if settings.environment == "development":
+        allowed_origins = ["*"]
     
     # Add CORS middleware
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allowed_origins,
-        allow_credentials=settings.cors_allow_credentials,
-        allow_methods=allowed_methods,
-        allow_headers=allowed_headers,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
         expose_headers=["Content-Length", "Content-Type", "Authorization"],
         max_age=600,  # Cache preflight requests for 10 minutes
     )
     
     # Log CORS configuration in debug mode
     if settings.debug:
-        print(f"🔒 CORS configured:")
+        print(f"CORS configured:")
         print(f"   - Allowed origins: {allowed_origins}")
-        print(f"   - Allow credentials: {settings.cors_allow_credentials}")
-        print(f"   - Allowed methods: {allowed_methods}")
-        print(f"   - Allowed headers: {allowed_headers}")
+        print(f"   - Allow credentials: True")
+        print(f"   - Allowed methods: *")
+        print(f"   - Allowed headers: *")
+
+
+# Create the app instance
+app = create_app()
 

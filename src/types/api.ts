@@ -116,6 +116,7 @@ export interface PaymentReceipt {
 export interface UtilityProvider {
   id: string;
   name: string;
+  provider_name: string;
   country_code: string;
   state_province: string;
   is_active: boolean;
@@ -131,4 +132,35 @@ export interface ExchangeRate {
 export interface ApiError {
   detail: string;
   status_code: number;
+}
+
+export interface VerificationResponse {
+  id: string;
+  user_id: string;
+  meter_id: string;
+  reading_value: number;
+  previous_reading?: number;
+  consumption_kwh?: number;
+  image_ipfs_hash: string;
+  ocr_engine: 'tesseract' | 'google_vision';
+  confidence: number;
+  raw_ocr_text?: string;
+  fraud_score: number;
+  fraud_flags?: Record<string, any>;
+  utility_reading?: number;
+  utility_api_response?: Record<string, any>;
+  status: 'VERIFIED' | 'WARNING' | 'DISCREPANCY' | 'FRAUD_DETECTED';
+  hcs_topic_id: string;
+  hcs_sequence_number: number;
+  hcs_timestamp?: string;
+  created_at: string;
+  bill?: BillSummary;
+}
+
+export interface BillSummary {
+  id: string;
+  total_fiat: number;
+  currency: string;
+  amount_hbar?: number;
+  exchange_rate?: number;
 }

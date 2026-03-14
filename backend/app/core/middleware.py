@@ -119,6 +119,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         """Add security headers to response"""
         response = await call_next(request)
         
+        # Skip security headers for OPTIONS requests (CORS preflight)
+        if request.method == "OPTIONS":
+            return response
+        
         # Add security headers
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
@@ -129,7 +133,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         
         # Basic CSP (can be customized per route if needed)
-        response.headers["Content-Security-Policy"] = "default-src 'self'"
+        # Disabled for now as it can interfere with frontend
+        # response.headers["Content-Security-Policy"] = "default-src 'self'"
         
         return response
 

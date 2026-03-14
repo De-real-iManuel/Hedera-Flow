@@ -203,19 +203,27 @@ export const useMetaMaskHedera = () => {
       setIsConnecting(false);
 
       setTimeout(() => {
-        window.location.href = '/';
+        window.location.href = '/home';
       }, 1000);
 
     } catch (error: any) {
       console.error('Backend authentication failed:', error);
+      console.error('Error details:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+        code: error.code,
+      });
       
       if (error.code === 4001) {
         toast.error('Signature Rejected', {
           description: 'You rejected the signature request',
         });
       } else {
+        const errorMessage = error.response?.data?.detail || error.message || 'Please try again';
+        console.error('Showing error to user:', errorMessage);
         toast.error('Authentication Failed', {
-          description: error.response?.data?.detail || error.message || 'Please try again',
+          description: errorMessage,
         });
       }
       setIsConnecting(false);
@@ -247,22 +255,39 @@ export const useMetaMaskHedera = () => {
     try {
       console.log('Preparing HBAR payment:', params);
 
-      // Convert HBAR amount to tinybar (1 HBAR = 100,000,000 tinybar)
-      const tinybarAmount = Math.floor(params.amount * 100_000_000);
-      
-      // Convert to hex (wei equivalent for Hedera)
-      const amountHex = '0x' + tinybarAmount.toString(16);
+      // Convert Hedera account ID (0.0.X) to EVM address if needed
+      let toAddress = params.to;
+      if (params.to.startsWith('0.0.')) {
+        // Extract the account number from the Hedera account ID
+        const accountNum = BigInt(params.to.split('.')[2]);
+        
+        // Convert to EVM address format (20 bytes = 40 hex chars)
+        // Hedera uses a long-zero address format: 0x0000000000000000000000000000000000xxxxxx
+        toAddress = '0x' + accountNum.toString(16).padStart(40, '0');
+        
+        console.log(`Converted Hedera account ${params.to} to EVM address ${toAddress}`);
+      }
 
-      console.log(`Sending ${params.amount} HBAR (${tinybarAmount} tinybar) = ${amountHex}`);
+      // Convert HBAR amount to wei (1 HBAR = 10^8 tinybar = 10^18 wei on Hedera EVM)
+      // Note: Hedera uses 8 decimals for HBAR, but EVM uses 18 decimals
+      const weiAmount = BigInt(Math.floor(params.amount * 1e8)) * BigInt(1e10);
+      const amountHex = '0x' + weiAmount.toString(16);
+
+      console.log(`Sending ${params.amount} HBAR = ${weiAmount.toString()} wei = ${amountHex}`);
+
+      // Encode memo as hex data
+      const memoHex = '0x' + Array.from(new TextEncoder().encode(params.memo))
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
 
       // Request transaction from MetaMask
       const txHash = await window.ethereum.request({
         method: 'eth_sendTransaction',
         params: [{
           from: walletState.evmAddress,
-          to: params.to,
+          to: toAddress,
           value: amountHex,
-          data: '0x' + Buffer.from(params.memo, 'utf8').toString('hex'), // Encode memo as hex
+          data: memoHex,
         }],
       });
 
@@ -328,9 +353,11 @@ export const useMetaMaskHedera = () => {
         params: [walletState.evmAddress, 'latest'],
       });
 
-      // Convert from hex wei to HBAR (1 HBAR = 100,000,000 tinybar)
-      const balanceTinybar = parseInt(balanceHex, 16);
-      const balanceHbar = balanceTinybar / 100_000_000;
+      // Convert from hex wei to HBAR
+      // Hedera EVM uses 18 decimals (wei), but HBAR has 8 decimals (tinybar)
+      // 1 HBAR = 10^8 tinybar = 10^18 wei on Hedera EVM
+      const balanceWei = BigInt(balanceHex);
+      const balanceHbar = Number(balanceWei) / 1e18;
 
       return balanceHbar;
     } catch (error) {

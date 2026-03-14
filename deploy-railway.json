@@ -1,0 +1,24 @@
+{
+  "services": {
+    "backend": {
+      "source": "./backend",
+      "build": {
+        "builder": "NIXPACKS"
+      },
+      "deploy": {
+        "startCommand": "uvicorn app.core.app:app --host 0.0.0.0 --port $PORT",
+        "healthcheckPath": "/health"
+      }
+    },
+    "frontend": {
+      "source": "./",
+      "build": {
+        "builder": "NIXPACKS",
+        "buildCommand": "npm run build"
+      },
+      "deploy": {
+        "startCommand": "npm run preview -- --host 0.0.0.0 --port $PORT"
+      }
+    }
+  }
+}
