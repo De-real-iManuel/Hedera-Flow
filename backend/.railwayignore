@@ -1,0 +1,20 @@
+# Test files
+test_*.py
+create_test_*.py
+check_*.py
+
+# Documentation
+*.md
+!README.md
+
+# Cache
+__pycache__/
+.pytest_cache/
+*.pyc
+*.pyo
+*.log
+
+# Development
+.env
+.env.local
+.vscode/
