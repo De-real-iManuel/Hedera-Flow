@@ -52,7 +52,7 @@
     "@walletconnect/ethereum-provider": "^2.23.8",
     "@walletconnect/modal": "^2.7.0",
     "anvil": "^0.0.6",
-    "axios": "^1.13.5",
+    "axios": "^1.13.6",
     "buffer": "^6.0.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
