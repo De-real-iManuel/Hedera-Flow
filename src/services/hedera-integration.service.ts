@@ -115,7 +115,7 @@ export class HederaIntegrationService {
         hcsEntry
       );
 
-      console.log(`🚨 Logged fraud alert to HCS for meter ${meterId}`);
+      console.log(` Logged fraud alert to HCS for meter ${meterId}`);
       return {
         transactionId: result.transactionId,
         consensusTimestamp: result.consensusTimestamp,

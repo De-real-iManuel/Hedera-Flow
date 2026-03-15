@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { authApi, billsApi } from '@/lib/api';
 import { toast } from 'sonner';
+import { useAuth } from '@/hooks/useAuth';
 
 const LoginTestPage = () => {
   const [isLoading, setIsLoading] = useState(false);
-  const [isLoggedIn, setIsLoggedIn] = useState(!!localStorage.getItem('auth_token'));
+  const { user } = useAuth();
   const [testResults, setTestResults] = useState<string[]>([]);
 
   const addResult = (message: string) => {
@@ -23,8 +24,7 @@ const LoginTestPage = () => {
         password: 'testpass123'
       });
       
-      addResult(`✅ Login successful: ${result.user.email}`);
-      setIsLoggedIn(true);
+      addResult(`✅ Login successful: ${result.email}`);
       toast.success('Login successful!');
       
       // Test bills API
@@ -40,11 +40,14 @@ const LoginTestPage = () => {
     }
   };
 
-  const testLogout = () => {
-    authApi.logout();
-    setIsLoggedIn(false);
-    setTestResults([]);
-    toast.success('Logged out');
+  const testLogout = async () => {
+    try {
+      await authApi.logout();
+      setTestResults([]);
+      toast.success('Logged out');
+    } catch (error) {
+      toast.error('Logout failed');
+    }
   };
 
   return (
@@ -55,13 +58,13 @@ const LoginTestPage = () => {
         <div className="glass-card p-6 space-y-4">
           <div className="flex items-center justify-between">
             <span>Status:</span>
-            <span className={`font-semibold ${isLoggedIn ? 'text-green-600' : 'text-red-600'}`}>
-              {isLoggedIn ? 'Logged In' : 'Not Logged In'}
+            <span className={`font-semibold ${user ? 'text-green-600' : 'text-red-600'}`}>
+              {user ? 'Logged In' : 'Not Logged In'}
             </span>
           </div>
           
           <div className="space-y-2">
-            {!isLoggedIn ? (
+            {!user ? (
               <button
                 onClick={testLogin}
                 disabled={isLoading}

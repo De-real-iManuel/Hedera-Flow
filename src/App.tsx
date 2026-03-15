@@ -31,24 +31,18 @@ const queryClient = new QueryClient();
 
 const AppContent = () => {
   const [showSplash, setShowSplash] = useState(false);
-  const [isAuthenticated, setIsAuthenticated] = useState(!!localStorage.getItem('auth_token'));
   const location = useLocation();
   const navigate = useNavigate();
-
-  // Update auth state when location changes (after login/register)
-  useEffect(() => {
-    setIsAuthenticated(!!localStorage.getItem('auth_token'));
-  }, [location.pathname]);
 
   // Show splash screen only after successful authentication
   useEffect(() => {
     const hasSeenSplash = sessionStorage.getItem('hasSeenSplash');
     
-    // Show splash if user just authenticated and hasn't seen it this session
-    if (isAuthenticated && !hasSeenSplash && location.pathname === '/home') {
+    // Show splash if user navigates to home and hasn't seen it this session
+    if (!hasSeenSplash && location.pathname === '/home') {
       setShowSplash(true);
     }
-  }, [isAuthenticated, location.pathname]);
+  }, [location.pathname]);
 
   const handleSplashComplete = () => {
     setShowSplash(false);
@@ -57,7 +51,7 @@ const AppContent = () => {
 
   // Pages where BottomNav should NOT be shown
   const hideNavPaths = ['/', '/auth', '/verify-email', '/login', '/register'];
-  const shouldShowNav = !hideNavPaths.includes(location.pathname) && isAuthenticated;
+  const shouldShowNav = !hideNavPaths.includes(location.pathname);
 
   return (
     <>

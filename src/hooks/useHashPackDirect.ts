@@ -193,8 +193,7 @@ export const useHashPackDirect = () => {
         message,
       });
 
-      localStorage.setItem('auth_token', response.token);
-      localStorage.setItem('user', JSON.stringify(response.user));
+      // No need to store token - it's in httpOnly cookie
 
       toast.success('Successfully authenticated!', {
         description: 'Redirecting to dashboard...',
@@ -203,7 +202,7 @@ export const useHashPackDirect = () => {
       setIsConnecting(false);
 
       setTimeout(() => {
-        window.location.href = '/';
+        window.location.href = '/home';
       }, 1000);
 
     } catch (error: any) {

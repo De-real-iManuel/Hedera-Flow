@@ -17,12 +17,12 @@ import type {
 
 // Auth API
 export const authApi = {
-  login: async (data: LoginRequest): Promise<AuthResponse> => {
+  login: async (data: LoginRequest): Promise<User> => {
     const formData = new URLSearchParams();
     formData.append('username', data.email);
     formData.append('password', data.password);
     
-    const response = await apiClient.post<AuthResponse>('/auth/login', formData, {
+    const response = await apiClient.post<User>('/auth/login', formData, {
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
       },
@@ -30,8 +30,8 @@ export const authApi = {
     return response.data;
   },
 
-  register: async (data: RegisterRequest): Promise<AuthResponse> => {
-    const response = await apiClient.post<AuthResponse>('/auth/register', data);
+  register: async (data: RegisterRequest): Promise<User> => {
+    const response = await apiClient.post<User>('/auth/register', data);
     return response.data;
   },
 
@@ -39,26 +39,24 @@ export const authApi = {
     hedera_account_id: string;
     signature: string;
     message: string;
-  }): Promise<AuthResponse> => {
-    const response = await apiClient.post<AuthResponse>('/auth/wallet-connect', data);
+  }): Promise<User> => {
+    const response = await apiClient.post<User>('/auth/wallet-connect', data);
     return response.data;
   },
 
   getCurrentUser: async (): Promise<User> => {
-    // Check if user is stored in localStorage (temporary until JWT middleware is integrated)
-    const storedUser = localStorage.getItem('user');
-    if (storedUser) {
-      return JSON.parse(storedUser);
-    }
-    
-    // If no stored user, try to fetch from backend (will fail until JWT middleware is integrated)
     const response = await apiClient.get<User>('/auth/me');
     return response.data;
   },
 
-  logout: () => {
-    localStorage.removeItem('auth_token');
-    localStorage.removeItem('user');
+  refreshToken: async (): Promise<User> => {
+    const response = await apiClient.post<User>('/auth/refresh-token');
+    return response.data;
+  },
+
+  logout: async (): Promise<{ message: string }> => {
+    const response = await apiClient.post<{ message: string }>('/auth/logout');
+    return response.data;
   },
 };
 

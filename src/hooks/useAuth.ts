@@ -7,21 +7,25 @@ export const useAuth = () => {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
 
-  // Get current user
+  // Get current user - no longer depends on localStorage token
   const { data: user, isLoading, error } = useQuery({
     queryKey: ['user'],
     queryFn: authApi.getCurrentUser,
-    enabled: !!localStorage.getItem('auth_token'),
-    retry: false,
+    retry: (failureCount, error: any) => {
+      // Don't retry on 401 errors (unauthenticated)
+      if (error?.response?.status === 401) {
+        return false;
+      }
+      return failureCount < 3;
+    },
   });
 
   // Login mutation
   const loginMutation = useMutation({
     mutationFn: authApi.login,
     onSuccess: (data) => {
-      localStorage.setItem('auth_token', data.token);
-      localStorage.setItem('user', JSON.stringify(data.user));
-      queryClient.setQueryData(['user'], data.user);
+      // No need to store token - it's in httpOnly cookie
+      queryClient.setQueryData(['user'], data);
       // Clear splash screen flag so it shows again after login
       sessionStorage.removeItem('hasSeenSplash');
       navigate('/home');
@@ -32,9 +36,8 @@ export const useAuth = () => {
   const registerMutation = useMutation({
     mutationFn: authApi.register,
     onSuccess: (data) => {
-      localStorage.setItem('auth_token', data.token);
-      localStorage.setItem('user', JSON.stringify(data.user));
-      queryClient.setQueryData(['user'], data.user);
+      // No need to store token - it's in httpOnly cookie
+      queryClient.setQueryData(['user'], data);
       // Clear splash screen flag so it shows after registration
       sessionStorage.removeItem('hasSeenSplash');
       navigate('/home');
@@ -42,10 +45,30 @@ export const useAuth = () => {
   });
 
   // Logout
-  const logout = () => {
-    authApi.logout();
-    queryClient.clear();
-    navigate('/AuthPage');
+  const logout = async () => {
+    try {
+      await authApi.logout();
+    } catch (error) {
+      // Even if logout fails on server, clear client state
+      console.warn('Logout request failed, but clearing client state:', error);
+    } finally {
+      queryClient.clear();
+      navigate('/auth');
+    }
+  };
+
+  // Token refresh function (called automatically by interceptor)
+  const refreshToken = async () => {
+    try {
+      const userData = await authApi.refreshToken();
+      queryClient.setQueryData(['user'], userData);
+      return userData;
+    } catch (error) {
+      // Refresh failed, clear user data and redirect
+      queryClient.setQueryData(['user'], null);
+      navigate('/auth');
+      throw error;
+    }
   };
 
   return {
@@ -55,6 +78,7 @@ export const useAuth = () => {
     login: loginMutation.mutate,
     register: registerMutation.mutate,
     logout,
+    refreshToken,
     isLoginLoading: loginMutation.isPending,
     isRegisterLoading: registerMutation.isPending,
     loginError: loginMutation.error,

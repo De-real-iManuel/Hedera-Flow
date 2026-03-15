@@ -1,8 +1,8 @@
 """
 Authentication Endpoints
-User registration, login, and wallet connection
+User registration, login, and wallet connection with httpOnly cookies
 """
-from fastapi import APIRouter, Depends, HTTPException, status, Form
+from fastapi import APIRouter, Depends, HTTPException, status, Form, Response, Request
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from datetime import datetime, timedelta
@@ -13,17 +13,45 @@ from app.core.database import get_db
 from app.core.dependencies import get_current_user as get_current_user_dependency
 from app.schemas.auth import RegisterRequest, LoginRequest, WalletConnectRequest, AuthResponse, UserResponse
 from app.models.user import User, CountryCodeEnum, WalletTypeEnum
-from app.utils.auth import hash_password, create_access_token, validate_password_strength
+from app.utils.auth import hash_password, create_access_token, create_refresh_token, validate_password_strength, decode_access_token
 from app.services.hedera_service import get_hedera_service
+from config import settings
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
-@router.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
+def set_auth_cookies(response: Response, access_token: str, refresh_token: str):
+    """Set httpOnly cookies for authentication tokens"""
+    # Determine if we're in production (use secure cookies only for HTTPS)
+    is_production = getattr(settings, 'environment', 'development') == 'production'
+    
+    # Set access token cookie (15 minutes)
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        max_age=15 * 60,  # 15 minutes in seconds
+        httponly=True,
+        secure=is_production,  # Only secure in production (HTTPS)
+        samesite="strict"
+    )
+    
+    # Set refresh token cookie (7 days)
+    response.set_cookie(
+        key="refresh_token", 
+        value=refresh_token,
+        max_age=7 * 24 * 60 * 60,  # 7 days in seconds
+        httponly=True,
+        secure=is_production,  # Only secure in production (HTTPS)
+        samesite="strict"
+    )
+
+
+@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def register(
     request: RegisterRequest,
+    response: Response,
     db: Session = Depends(get_db)
 ):
     """
@@ -37,14 +65,15 @@ async def register(
         - US-1: User can register with email + password OR connect HashPack wallet
         - US-1: System creates Hedera account (testnet) if user doesn't have one
         - NFR-2.2: Passwords shall be hashed with bcrypt (cost factor 12)
-        - NFR-2.3: JWT tokens shall expire after 30 days
+        - NFR-2.3: Access tokens shall expire after 15 minutes, refresh tokens after 7 days
     
     Args:
         request: Registration request with email, password, country_code, and optional hedera_account_id
+        response: FastAPI response object to set cookies
         db: Database session
         
     Returns:
-        AuthResponse with JWT token and user data
+        UserResponse with user data (token set in httpOnly cookie)
         
     Raises:
         HTTPException 400: Email already exists, invalid country code, or password validation failed
@@ -74,28 +103,33 @@ async def register(
             # Wallet-only authentication (no password)
             password_hash = None
         
-        # Create Hedera account if not provided (TEMPORARILY DISABLED FOR TESTING)
-        # Generate unique test account ID for each user during MVP
-        import uuid
-        test_account_suffix = str(uuid.uuid4())[:8]
-        hedera_account_id = request.hedera_account_id or f"0.0.TEST_{test_account_suffix}"
-        wallet_type = WalletTypeEnum.HASHPACK if request.hedera_account_id else WalletTypeEnum.SYSTEM_GENERATED
-        
-        # TODO: Re-enable Hedera account creation after fixing credentials
-        # if not hedera_account_id:
-        #     try:
-        #         logger.info(f"Creating Hedera account for user: {request.email}")
-        #         hedera_service = get_hedera_service()
-        #         account_id, private_key = hedera_service.create_account(initial_balance=10.0)
-        #         hedera_account_id = account_id
-        #         logger.info(f"Created Hedera account: {account_id}")
-        #         logger.info(f"Private key for {account_id}: {private_key}")
-        #     except Exception as e:
-        #         logger.error(f"Failed to create Hedera account: {e}")
-        #         raise HTTPException(
-        #             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        #             detail=f"Failed to create Hedera account: {str(e)}"
-        #         )
+        # Create Hedera account if not provided
+        if request.hedera_account_id:
+            # User provided their own Hedera account (wallet connection)
+            hedera_account_id = request.hedera_account_id
+            wallet_type = WalletTypeEnum.HASHPACK
+        else:
+            # Create new Hedera account for user
+            try:
+                logger.info(f"Creating Hedera account for user: {request.email}")
+                hedera_service = get_hedera_service()
+                account_id, private_key = hedera_service.create_account(initial_balance=10.0)
+                hedera_account_id = account_id
+                wallet_type = WalletTypeEnum.SYSTEM_GENERATED
+                
+                logger.info(f"Created Hedera account: {account_id}")
+                # TODO: Securely store or send private key to user
+                # For now, log it (REMOVE IN PRODUCTION)
+                logger.info(f"Private key for {account_id}: {private_key}")
+                
+            except Exception as e:
+                logger.error(f"Failed to create Hedera account: {e}")
+                # Fallback to test account for development
+                import uuid
+                test_account_suffix = str(uuid.uuid4())[:8]
+                hedera_account_id = f"0.0.TEST_{test_account_suffix}"
+                wallet_type = WalletTypeEnum.SYSTEM_GENERATED
+                logger.warning(f"Using test account as fallback: {hedera_account_id}")
         
         # Create user in database
         new_user = User(
@@ -126,15 +160,25 @@ async def register(
         verification_link = f"http://localhost:8080/verify-email?token={verification_token}"
         logger.info(f"Email verification link: {verification_link}")
         
-        # Generate JWT token
-        token = create_access_token(
+        # Generate JWT tokens
+        access_token = create_access_token(
             user_id=str(new_user.id),
             email=new_user.email,
             country_code=new_user.country_code.value,
             hedera_account_id=new_user.hedera_account_id
         )
         
-        # Prepare response
+        refresh_token = create_refresh_token(
+            user_id=str(new_user.id),
+            email=new_user.email,
+            country_code=new_user.country_code.value,
+            hedera_account_id=new_user.hedera_account_id
+        )
+        
+        # Set httpOnly cookies
+        set_auth_cookies(response, access_token, refresh_token)
+        
+        # Prepare response (no token in body)
         user_response = UserResponse(
             id=str(new_user.id),
             first_name=new_user.first_name,
@@ -148,10 +192,7 @@ async def register(
             is_active=new_user.is_active
         )
         
-        return AuthResponse(
-            token=token,
-            user=user_response
-        )
+        return user_response
         
     except HTTPException:
         # Re-raise HTTP exceptions
@@ -172,10 +213,11 @@ async def register(
         )
 
 
-@router.post("/login", response_model=AuthResponse)
+@router.post("/login", response_model=UserResponse)
 async def login(
     username: str = Form(...),  # OAuth2 standard uses 'username' field
     password: str = Form(...),
+    response: Response = None,
     db: Session = Depends(get_db)
 ):
     """
@@ -186,15 +228,16 @@ async def login(
     Requirements:
         - FR-1.4: System shall use JWT tokens for session management
         - US-1: User can login with email + password
-        - NFR-2.3: JWT tokens shall expire after 30 days
+        - NFR-2.3: Access tokens shall expire after 15 minutes, refresh tokens after 7 days
     
     Args:
         username: User's email address (OAuth2 standard field name)
         password: User's password
+        response: FastAPI response object to set cookies
         db: Database session
         
     Returns:
-        AuthResponse with JWT token and user data
+        UserResponse with user data (token set in httpOnly cookie)
         
     Raises:
         HTTPException 401: Invalid credentials
@@ -230,7 +273,7 @@ async def login(
         
         # Check if account is active
         if not user.is_active:
-            logger.warning(f"Login attempt for inactive user: {request.email}")
+            logger.warning(f"Login attempt for inactive user: {username}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Account is inactive"
@@ -243,15 +286,25 @@ async def login(
         
         logger.info(f"User logged in successfully: {user.email} (ID: {user.id})")
         
-        # Generate JWT token
-        token = create_access_token(
+        # Generate JWT tokens
+        access_token = create_access_token(
             user_id=str(user.id),
             email=user.email,
             country_code=user.country_code.value,
             hedera_account_id=user.hedera_account_id
         )
         
-        # Prepare response
+        refresh_token = create_refresh_token(
+            user_id=str(user.id),
+            email=user.email,
+            country_code=user.country_code.value,
+            hedera_account_id=user.hedera_account_id
+        )
+        
+        # Set httpOnly cookies
+        set_auth_cookies(response, access_token, refresh_token)
+        
+        # Prepare response (no token in body)
         user_response = UserResponse(
             id=str(user.id),
             first_name=user.first_name,
@@ -265,10 +318,7 @@ async def login(
             is_active=user.is_active
         )
         
-        return AuthResponse(
-            token=token,
-            user=user_response
-        )
+        return user_response
         
     except HTTPException:
         # Re-raise HTTP exceptions
@@ -285,9 +335,204 @@ async def login(
 # - POST /refresh-token
 
 
-@router.post("/wallet-connect", response_model=AuthResponse)
+@router.post("/refresh-token", response_model=UserResponse)
+async def refresh_token(
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db)
+):
+    """
+    Refresh access token using refresh token from httpOnly cookie
+    
+    This endpoint allows clients to get a new access token using their refresh token.
+    Both tokens are rotated for security.
+    
+    Requirements:
+        - FR-1.4: System shall use JWT tokens for session management
+        - NFR-2.3: Access tokens shall expire after 15 minutes, refresh tokens after 7 days
+    
+    Args:
+        request: FastAPI request object to access cookies
+        response: FastAPI response object to set new cookies
+        db: Database session
+        
+    Returns:
+        UserResponse with user data (new tokens set in httpOnly cookies)
+        
+    Raises:
+        HTTPException 401: Invalid or expired refresh token
+        HTTPException 404: User not found
+    """
+    try:
+        # Extract refresh token from httpOnly cookie
+        refresh_token_value = request.cookies.get("refresh_token")
+        
+        if not refresh_token_value:
+            logger.warning("Token refresh failed: No refresh token cookie provided")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Refresh token required"
+            )
+        
+        # Decode and verify refresh token
+        try:
+            payload = decode_access_token(refresh_token_value)
+        except Exception as e:
+            logger.warning(f"Token refresh failed: Invalid refresh token - {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid refresh token"
+            )
+        
+        # Verify token type
+        token_type = payload.get("type")
+        if token_type != "refresh":
+            logger.warning(f"Token refresh failed: Invalid token type '{token_type}'")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token type"
+            )
+        
+        # Extract user ID from token payload
+        user_id = payload.get("sub")
+        if not user_id:
+            logger.warning("Token refresh failed: Token missing 'sub' claim")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token payload"
+            )
+        
+        # Fetch user from database
+        from uuid import UUID
+        try:
+            user_uuid = UUID(user_id)
+        except ValueError:
+            logger.warning(f"Token refresh failed: Invalid user ID format '{user_id}'")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid user ID in token"
+            )
+        
+        user = db.query(User).filter(User.id == user_uuid).first()
+        
+        if not user:
+            logger.warning(f"Token refresh failed: User {user_id} not found in database")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        # Check if user account is active
+        if not user.is_active:
+            logger.warning(f"Token refresh failed: User {user_id} account is inactive")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Account is inactive"
+            )
+        
+        logger.info(f"Token refreshed successfully for user: {user.email} (ID: {user.id})")
+        
+        # Generate new JWT tokens (rotate both for security)
+        new_access_token = create_access_token(
+            user_id=str(user.id),
+            email=user.email,
+            country_code=user.country_code.value,
+            hedera_account_id=user.hedera_account_id
+        )
+        
+        new_refresh_token = create_refresh_token(
+            user_id=str(user.id),
+            email=user.email,
+            country_code=user.country_code.value,
+            hedera_account_id=user.hedera_account_id
+        )
+        
+        # Set new httpOnly cookies
+        set_auth_cookies(response, new_access_token, new_refresh_token)
+        
+        # Prepare response (no token in body)
+        user_response = UserResponse(
+            id=str(user.id),
+            first_name=user.first_name,
+            last_name=user.last_name,
+            email=user.email,
+            country_code=user.country_code,
+            hedera_account_id=user.hedera_account_id,
+            wallet_type=user.wallet_type,
+            created_at=user.created_at,
+            last_login=user.last_login,
+            is_active=user.is_active
+        )
+        
+        return user_response
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error during token refresh: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Token refresh failed"
+        )
+
+
+@router.post("/logout")
+async def logout(
+    response: Response
+):
+    """
+    Logout user by clearing authentication cookies
+    
+    This endpoint clears the httpOnly cookies containing the JWT tokens,
+    effectively logging out the user.
+    
+    Requirements:
+        - FR-1.4: System shall use JWT tokens for session management
+        - Secure logout by clearing httpOnly cookies
+    
+    Args:
+        response: FastAPI response object to clear cookies
+        
+    Returns:
+        Success message
+    """
+    try:
+        # Determine if we're in production
+        is_production = getattr(settings, 'environment', 'development') == 'production'
+        
+        # Clear access token cookie
+        response.delete_cookie(
+            key="access_token",
+            httponly=True,
+            secure=is_production,
+            samesite="strict"
+        )
+        
+        # Clear refresh token cookie
+        response.delete_cookie(
+            key="refresh_token",
+            httponly=True,
+            secure=is_production,
+            samesite="strict"
+        )
+        
+        logger.info("User logged out successfully")
+        
+        return {"message": "Logged out successfully"}
+        
+    except Exception as e:
+        logger.error(f"Unexpected error during logout: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Logout failed"
+        )
+
+
+@router.post("/wallet-connect", response_model=UserResponse)
 async def wallet_connect(
     request: WalletConnectRequest,
+    response: Response,
     db: Session = Depends(get_db)
 ):
     """
@@ -304,14 +549,15 @@ async def wallet_connect(
         - FR-1.2: System shall support wallet connection
         - FR-1.4: System shall use JWT tokens for session management
         - US-1: User can register with email + password OR connect wallet
-        - NFR-2.3: JWT tokens shall expire after 30 days
+        - NFR-2.3: Access tokens shall expire after 15 minutes, refresh tokens after 7 days
     
     Args:
         request: Wallet connection request with hedera_account_id (or EVM address), signature, and message
+        response: FastAPI response object to set cookies
         db: Database session
         
     Returns:
-        AuthResponse with JWT token and user data
+        UserResponse with user data (token set in httpOnly cookie)
         
     Raises:
         HTTPException 401: Invalid signature
@@ -391,15 +637,25 @@ async def wallet_connect(
             db.commit()
             db.refresh(existing_user)
             
-            # Generate JWT token
-            token = create_access_token(
+            # Generate JWT tokens
+            access_token = create_access_token(
                 user_id=str(existing_user.id),
                 email=existing_user.email,
                 country_code=existing_user.country_code.value,
                 hedera_account_id=existing_user.hedera_account_id
             )
             
-            # Prepare response
+            refresh_token = create_refresh_token(
+                user_id=str(existing_user.id),
+                email=existing_user.email,
+                country_code=existing_user.country_code.value,
+                hedera_account_id=existing_user.hedera_account_id
+            )
+            
+            # Set httpOnly cookies
+            set_auth_cookies(response, access_token, refresh_token)
+            
+            # Prepare response (no token in body)
             user_response = UserResponse(
                 id=str(existing_user.id),
                 first_name=existing_user.first_name,
@@ -413,10 +669,7 @@ async def wallet_connect(
                 is_active=existing_user.is_active
             )
             
-            return AuthResponse(
-                token=token,
-                user=user_response
-            )
+            return user_response
         
         else:
             # User doesn't exist - create new account
@@ -450,15 +703,25 @@ async def wallet_connect(
             
             logger.info(f"New wallet user created: {new_user.email} (ID: {new_user.id})")
             
-            # Generate JWT token
-            token = create_access_token(
+            # Generate JWT tokens
+            access_token = create_access_token(
                 user_id=str(new_user.id),
                 email=new_user.email,
                 country_code=new_user.country_code.value,
                 hedera_account_id=new_user.hedera_account_id
             )
             
-            # Prepare response
+            refresh_token = create_refresh_token(
+                user_id=str(new_user.id),
+                email=new_user.email,
+                country_code=new_user.country_code.value,
+                hedera_account_id=new_user.hedera_account_id
+            )
+            
+            # Set httpOnly cookies
+            set_auth_cookies(response, access_token, refresh_token)
+            
+            # Prepare response (no token in body)
             user_response = UserResponse(
                 id=str(new_user.id),
                 first_name=new_user.first_name,
@@ -472,10 +735,7 @@ async def wallet_connect(
                 is_active=new_user.is_active
             )
             
-            return AuthResponse(
-                token=token,
-                user=user_response
-            )
+            return user_response
         
     except HTTPException:
         # Re-raise HTTP exceptions

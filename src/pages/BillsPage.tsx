@@ -29,14 +29,7 @@ const BillsPage = () => {
 
   // Check authentication and redirect if not logged in
   useEffect(() => {
-    const token = localStorage.getItem('auth_token');
-    if (!token) {
-      // Redirect to auth page if not authenticated
-      window.location.href = '/auth';
-      return;
-    }
-    
-    // Fetch bills only if authenticated
+    // Fetch bills (AuthGuard will handle authentication)
     fetchBills();
   }, []);
 

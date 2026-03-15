@@ -119,9 +119,21 @@ def configure_cors(app: FastAPI) -> None:
         # Merge with any custom origins from env
         allowed_origins = list(set(allowed_origins + production_origins))
     
-    # In development, allow all origins for easier testing
+    # In development, allow specific localhost origins (cannot use * with credentials)
     if settings.environment == "development":
-        allowed_origins = ["*"]
+        development_origins = [
+            "http://localhost:3000",  # Next.js default
+            "http://localhost:5173",  # Vite default
+            "http://localhost:8080",  # Alternative port
+            "http://localhost:8081",  # Current frontend port
+            "http://127.0.0.1:3000",
+            "http://127.0.0.1:5173",
+            "http://127.0.0.1:8080",
+            "http://127.0.0.1:8081",
+        ]
+        # Merge with any custom origins from env, but filter out wildcards
+        custom_origins = [origin for origin in allowed_origins if origin != "*"]
+        allowed_origins = list(set(development_origins + custom_origins))
     
     # Add CORS middleware
     app.add_middleware(

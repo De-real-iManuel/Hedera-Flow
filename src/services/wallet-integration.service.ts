@@ -1,7 +1,9 @@
 /**
- * Hedera Wallet Integration Service
- * Handles real wallet connections and transactions
+ * MetaMask + WalletConnect Integration Service
+ * Handles MetaMask web extension and mobile app connections
  */
+
+import { ethers } from 'ethers';
 
 export interface WalletProvider {
   name: string;
@@ -12,29 +14,103 @@ export interface WalletProvider {
 }
 
 export interface WalletConnection {
-  accountId: string;
-  network: 'testnet' | 'mainnet';
+  address: string;
+  network: string;
   provider: string;
-  signTransaction: (transaction: any) => Promise<string>;
+  chainId: number;
+  signMessage: (message: string) => Promise<string>;
   disconnect: () => Promise<void>;
 }
 
 export interface TransactionRequest {
   to: string;
-  amount: number; // HBAR amount
-  memo?: string;
+  value: string; // ETH amount in wei
+  data?: string;
 }
 
 export interface TransactionResult {
-  transactionId: string;
+  hash: string;
   status: 'pending' | 'success' | 'failed';
-  consensusTimestamp?: string;
+  blockNumber?: number;
   explorerUrl?: string;
 }
 
 class WalletIntegrationService {
   private connection: WalletConnection | null = null;
-  private readonly NETWORK = 'testnet'; // Change to 'mainnet' for production
+  private provider: ethers.BrowserProvider | null = null;
+  private walletConnectProvider: any = null;
+
+  /**
+   * Debug method to check what's available on window object
+   */
+  debugWalletDetection(): void {
+    if (typeof window === 'undefined') {
+      console.log('Window object not available (SSR)');
+      return;
+    }
+
+    console.log('=== Wallet Detection Debug ===');
+    const ethereum = (window as any).ethereum;
+    console.log('window.ethereum:', !!ethereum);
+    
+    if (ethereum) {
+      console.log('ethereum.isMetaMask:', ethereum.isMetaMask);
+      console.log('ethereum.isPhantom:', ethereum.isPhantom);
+      console.log('ethereum.isBraveWallet:', ethereum.isBraveWallet);
+      
+      if (ethereum.providers) {
+        console.log('Multiple providers detected:', ethereum.providers.length);
+        ethereum.providers.forEach((provider: any, index: number) => {
+          console.log(`Provider ${index}:`, {
+            isMetaMask: provider.isMetaMask,
+            isPhantom: provider.isPhantom,
+            isBraveWallet: provider.isBraveWallet,
+          });
+        });
+      }
+    }
+    
+    console.log('MetaMask detected:', this.isMetaMaskInstalled());
+    console.log('===============================');
+  }
+
+  /**
+   * Check if MetaMask is installed
+   */
+  private isMetaMaskInstalled(): boolean {
+    if (typeof window === 'undefined') return false;
+    const ethereum = (window as any).ethereum;
+    
+    // Check if ethereum object exists and is MetaMask specifically
+    if (!ethereum) return false;
+    
+    // Handle multiple wallet extensions
+    if (ethereum.providers) {
+      // Multiple wallets detected, find MetaMask
+      return ethereum.providers.some((provider: any) => provider.isMetaMask);
+    }
+    
+    // Single wallet, check if it's MetaMask
+    return ethereum.isMetaMask === true;
+  }
+
+  /**
+   * Get MetaMask provider specifically (handle multiple wallets)
+   */
+  private getMetaMaskProvider(): any {
+    if (typeof window === 'undefined') return null;
+    const ethereum = (window as any).ethereum;
+    
+    if (!ethereum) return null;
+    
+    // Handle multiple wallet extensions
+    if (ethereum.providers) {
+      return ethereum.providers.find((provider: any) => provider.isMetaMask);
+    }
+    
+    // Single wallet
+    return ethereum.isMetaMask ? ethereum : null;
+  }
 
   /**
    * Get available wallet providers
@@ -42,174 +118,185 @@ class WalletIntegrationService {
   getAvailableWallets(): WalletProvider[] {
     const wallets: WalletProvider[] = [];
 
-    // HashPack Wallet
-    if (typeof window !== 'undefined' && (window as any).hashpack) {
+    if (typeof window === 'undefined') {
+      return wallets;
+    }
+
+    // MetaMask Web Extension
+    if (this.isMetaMaskInstalled()) {
       wallets.push({
-        name: 'HashPack',
-        id: 'hashpack',
-        icon: '/icons/hashpack.svg',
+        name: 'MetaMask',
+        id: 'metamask',
+        icon: '/icons/metamask.svg',
         isInstalled: true,
-        connect: () => this.connectHashPack(),
+        connect: () => this.connectMetaMask(),
       });
     }
 
-    // Blade Wallet
-    if (typeof window !== 'undefined' && (window as any).bladeWallet) {
-      wallets.push({
-        name: 'Blade Wallet',
-        id: 'blade',
-        icon: '/icons/blade.svg',
-        isInstalled: true,
-        connect: () => this.connectBlade(),
-      });
-    }
+    // Only show WalletConnect if user doesn't have MetaMask or wants mobile option
+    wallets.push({
+      name: 'WalletConnect (Mobile)',
+      id: 'walletconnect',
+      icon: '/icons/walletconnect.svg',
+      isInstalled: true, // Always available
+      connect: () => this.connectWalletConnect(),
+    });
 
-    // Kabila Wallet
-    if (typeof window !== 'undefined' && (window as any).kabila) {
-      wallets.push({
-        name: 'Kabila',
-        id: 'kabila',
-        icon: '/icons/kabila.svg',
-        isInstalled: true,
-        connect: () => this.connectKabila(),
-      });
-    }
-
+    console.log(`Found ${wallets.length} wallet option(s):`, wallets.map(w => w.name));
     return wallets;
   }
 
   /**
-   * Connect to HashPack wallet
+   * Connect to MetaMask
    */
-  private async connectHashPack(): Promise<WalletConnection> {
-    if (typeof window === 'undefined' || !(window as any).hashpack) {
-      throw new Error('HashPack wallet not found. Please install HashPack extension.');
+  private async connectMetaMask(): Promise<WalletConnection> {
+    const ethereum = this.getMetaMaskProvider();
+    
+    if (!ethereum) {
+      throw new Error('MetaMask not found. Please install MetaMask extension.');
     }
 
     try {
-      const hashpack = (window as any).hashpack;
-      const appMetadata = {
-        name: 'Hedera Flow',
-        description: 'Decentralized Utility Payment Platform',
-        icon: '/logo.png',
-      };
+      // Request account access
+      const accounts = await ethereum.request({
+        method: 'eth_requestAccounts',
+      });
 
-      const result = await hashpack.connectToLocalWallet(
-        undefined, // pairing string
-        appMetadata,
-        this.NETWORK === 'testnet'
-      );
-
-      if (!result.accountIds || result.accountIds.length === 0) {
-        throw new Error('No accounts found in HashPack wallet');
+      if (!accounts || accounts.length === 0) {
+        throw new Error('No accounts found in MetaMask');
       }
 
+      // Get network info
+      const chainId = await ethereum.request({ method: 'eth_chainId' });
+      const networkId = parseInt(chainId, 16);
+
+      this.provider = new ethers.BrowserProvider(ethereum);
+      const signer = await this.provider.getSigner();
+
       const connection: WalletConnection = {
-        accountId: result.accountIds[0],
-        network: this.NETWORK,
-        provider: 'hashpack',
-        signTransaction: async (transaction) => {
-          const signResult = await hashpack.signTransaction(
-            result.accountIds[0],
-            transaction
-          );
-          return signResult.signedTransaction;
+        address: accounts[0],
+        network: this.getNetworkName(networkId),
+        provider: 'metamask',
+        chainId: networkId,
+        signMessage: async (message: string) => {
+          return await signer.signMessage(message);
         },
         disconnect: async () => {
-          await hashpack.disconnect();
           this.connection = null;
+          this.provider = null;
         },
       };
 
       this.connection = connection;
       return connection;
     } catch (error) {
-      console.error('HashPack connection failed:', error);
-      throw new Error(`Failed to connect to HashPack: ${error}`);
+      console.error('MetaMask connection failed:', error);
+      
+      // Handle specific MetaMask errors
+      if (error instanceof Error) {
+        if (error.message.includes('User rejected')) {
+          throw new Error('Connection cancelled by user');
+        }
+        if (error.message.includes('Already processing')) {
+          throw new Error('MetaMask is busy. Please try again.');
+        }
+      }
+      
+      throw new Error(`Failed to connect to MetaMask: ${error}`);
     }
   }
 
   /**
-   * Connect to Blade wallet
+   * Connect via WalletConnect
    */
-  private async connectBlade(): Promise<WalletConnection> {
-    if (typeof window === 'undefined' || !(window as any).bladeWallet) {
-      throw new Error('Blade wallet not found. Please install Blade wallet extension.');
-    }
-
+  private async connectWalletConnect(): Promise<WalletConnection> {
     try {
-      const blade = (window as any).bladeWallet;
+      // Dynamic import to avoid SSR issues
+      const { EthereumProvider } = await import('@walletconnect/ethereum-provider');
       
-      const result = await blade.createAccount({
-        network: this.NETWORK,
-        dAppCode: 'hedera-flow',
+      const provider = await EthereumProvider.init({
+        projectId: import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || 'a410efc0d43c137138330074a67cdf07',
+        chains: [1, 5, 11155111], // Mainnet, Goerli, Sepolia
+        showQrModal: true,
+        metadata: {
+          name: 'Hedera Flow',
+          description: 'Decentralized Utility Payment Platform',
+          url: window.location.origin,
+          icons: [`${window.location.origin}/logo.png`],
+        },
+        // Add connection options for better reliability
+        relayUrl: 'wss://relay.walletconnect.com',
+        logger: 'error', // Reduce logging noise
       });
 
-      if (!result.accountId) {
-        throw new Error('Failed to get account from Blade wallet');
+      // Add connection timeout
+      const connectPromise = provider.enable();
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Connection timeout after 30 seconds')), 30000);
+      });
+
+      const accounts = await Promise.race([connectPromise, timeoutPromise]) as string[];
+      
+      if (!accounts || accounts.length === 0) {
+        throw new Error('No accounts found');
       }
 
+      const chainId = provider.chainId;
+      this.walletConnectProvider = provider;
+      this.provider = new ethers.BrowserProvider(provider);
+      const signer = await this.provider.getSigner();
+
       const connection: WalletConnection = {
-        accountId: result.accountId,
-        network: this.NETWORK,
-        provider: 'blade',
-        signTransaction: async (transaction) => {
-          const signResult = await blade.sign(transaction, result.accountId);
-          return signResult.signedTransaction;
+        address: accounts[0],
+        network: this.getNetworkName(chainId),
+        provider: 'walletconnect',
+        chainId: chainId,
+        signMessage: async (message: string) => {
+          return await signer.signMessage(message);
         },
         disconnect: async () => {
-          // Blade doesn't have explicit disconnect
+          if (this.walletConnectProvider) {
+            await this.walletConnectProvider.disconnect();
+            this.walletConnectProvider = null;
+          }
           this.connection = null;
+          this.provider = null;
         },
       };
 
       this.connection = connection;
       return connection;
     } catch (error) {
-      console.error('Blade connection failed:', error);
-      throw new Error(`Failed to connect to Blade: ${error}`);
+      console.error('WalletConnect connection failed:', error);
+      
+      // Provide more specific error messages
+      if (error instanceof Error) {
+        if (error.message.includes('timeout')) {
+          throw new Error('Connection timed out. Please try again or use MetaMask instead.');
+        }
+        if (error.message.includes('reset')) {
+          throw new Error('Connection was reset. Please refresh the page and try again.');
+        }
+        if (error.message.includes('WebSocket')) {
+          throw new Error('Network connection issue. Please check your internet and try again.');
+        }
+      }
+      
+      throw new Error(`Failed to connect via WalletConnect: ${error}`);
     }
   }
 
   /**
-   * Connect to Kabila wallet
+   * Get network name from chain ID
    */
-  private async connectKabila(): Promise<WalletConnection> {
-    if (typeof window === 'undefined' || !(window as any).kabila) {
-      throw new Error('Kabila wallet not found. Please install Kabila wallet.');
-    }
-
-    try {
-      const kabila = (window as any).kabila;
-      
-      const result = await kabila.connect({
-        network: this.NETWORK,
-        appName: 'Hedera Flow',
-      });
-
-      if (!result.accountId) {
-        throw new Error('Failed to get account from Kabila wallet');
-      }
-
-      const connection: WalletConnection = {
-        accountId: result.accountId,
-        network: this.NETWORK,
-        provider: 'kabila',
-        signTransaction: async (transaction) => {
-          const signResult = await kabila.signTransaction(transaction);
-          return signResult.signature;
-        },
-        disconnect: async () => {
-          await kabila.disconnect();
-          this.connection = null;
-        },
-      };
-
-      this.connection = connection;
-      return connection;
-    } catch (error) {
-      console.error('Kabila connection failed:', error);
-      throw new Error(`Failed to connect to Kabila: ${error}`);
+  private getNetworkName(chainId: number): string {
+    switch (chainId) {
+      case 1: return 'mainnet';
+      case 5: return 'goerli';
+      case 11155111: return 'sepolia';
+      case 137: return 'polygon';
+      case 80001: return 'mumbai';
+      default: return `chain-${chainId}`;
     }
   }
 
@@ -228,49 +315,35 @@ class WalletIntegrationService {
   }
 
   /**
-   * Send HBAR transaction
+   * Send ETH transaction
    */
   async sendTransaction(request: TransactionRequest): Promise<TransactionResult> {
-    if (!this.connection) {
+    if (!this.connection || !this.provider) {
       throw new Error('No wallet connected. Please connect a wallet first.');
     }
 
     try {
-      // Create transaction object (simplified - in real implementation, use Hedera SDK)
-      const transaction = {
-        type: 'CRYPTOTRANSFER',
-        transfers: [
-          {
-            accountId: this.connection.accountId,
-            amount: -request.amount, // Negative for sender
-          },
-          {
-            accountId: request.to,
-            amount: request.amount, // Positive for receiver
-          },
-        ],
-        memo: request.memo || '',
-        maxTransactionFee: 0.1, // 0.1 HBAR max fee
-      };
+      const signer = await this.provider.getSigner();
+      
+      const tx = await signer.sendTransaction({
+        to: request.to,
+        value: request.value,
+        data: request.data || '0x',
+      });
 
-      // Sign transaction with wallet
-      const signedTransaction = await this.connection.signTransaction(transaction);
-      
-      // In a real implementation, you would submit this to Hedera network
-      // For now, we'll simulate a successful transaction
-      const mockTransactionId = `0.0.${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-      
       const result: TransactionResult = {
-        transactionId: mockTransactionId,
+        hash: tx.hash,
         status: 'pending',
-        explorerUrl: `https://hashscan.io/${this.NETWORK}/transaction/${mockTransactionId}`,
+        explorerUrl: this.getExplorerUrl(tx.hash),
       };
 
-      // Simulate network confirmation after a delay
-      setTimeout(() => {
-        result.status = 'success';
-        result.consensusTimestamp = new Date().toISOString();
-      }, 3000);
+      // Wait for confirmation
+      tx.wait().then((receipt) => {
+        result.status = receipt.status === 1 ? 'success' : 'failed';
+        result.blockNumber = receipt.blockNumber;
+      }).catch(() => {
+        result.status = 'failed';
+      });
 
       return result;
     } catch (error) {
@@ -285,22 +358,37 @@ class WalletIntegrationService {
   async disconnect(): Promise<void> {
     if (this.connection) {
       await this.connection.disconnect();
-      this.connection = null;
     }
   }
 
   /**
    * Get network explorer URL for transaction
    */
-  getExplorerUrl(transactionId: string): string {
-    return `https://hashscan.io/${this.NETWORK}/transaction/${transactionId}`;
+  getExplorerUrl(txHash: string): string {
+    const chainId = this.connection?.chainId || 1;
+    switch (chainId) {
+      case 1: return `https://etherscan.io/tx/${txHash}`;
+      case 5: return `https://goerli.etherscan.io/tx/${txHash}`;
+      case 11155111: return `https://sepolia.etherscan.io/tx/${txHash}`;
+      case 137: return `https://polygonscan.com/tx/${txHash}`;
+      case 80001: return `https://mumbai.polygonscan.com/tx/${txHash}`;
+      default: return `https://etherscan.io/tx/${txHash}`;
+    }
   }
 
   /**
    * Get network explorer URL for account
    */
-  getAccountExplorerUrl(accountId: string): string {
-    return `https://hashscan.io/${this.NETWORK}/account/${accountId}`;
+  getAccountExplorerUrl(address: string): string {
+    const chainId = this.connection?.chainId || 1;
+    switch (chainId) {
+      case 1: return `https://etherscan.io/address/${address}`;
+      case 5: return `https://goerli.etherscan.io/address/${address}`;
+      case 11155111: return `https://sepolia.etherscan.io/address/${address}`;
+      case 137: return `https://polygonscan.com/address/${address}`;
+      case 80001: return `https://mumbai.polygonscan.com/address/${address}`;
+      default: return `https://etherscan.io/address/${address}`;
+    }
   }
 }
 

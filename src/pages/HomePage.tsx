@@ -18,7 +18,6 @@ const HomePage = () => {
   const { data: user, isLoading: userLoading } = useQuery({
     queryKey: ['user'],
     queryFn: authApi.getCurrentUser,
-    enabled: !!localStorage.getItem('auth_token'),
   });
 
   // TODO: Fetch bills data from API

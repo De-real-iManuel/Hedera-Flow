@@ -4,7 +4,7 @@ Password hashing and JWT token management
 """
 import bcrypt
 import jwt
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional
 from config import settings
 
@@ -52,7 +52,7 @@ def create_access_token(
     hedera_account_id: Optional[str] = None
 ) -> str:
     """
-    Create JWT access token for authenticated user
+    Create JWT access token for authenticated user (short-lived)
     
     Args:
         user_id: User's unique identifier
@@ -65,10 +65,11 @@ def create_access_token(
         
     Requirements:
         - FR-1.4: System shall use JWT tokens for session management
-        - NFR-2.3: JWT tokens shall expire after 30 days
+        - NFR-2.3: Access tokens shall expire after 15 minutes for security
     """
-    # Calculate expiration time
-    expiration = datetime.utcnow() + timedelta(days=settings.jwt_expiration_days)
+    # Use timezone-aware datetime to avoid timezone issues
+    now = datetime.now(timezone.utc)
+    expiration = now + timedelta(minutes=15)
     
     # Create token payload
     payload = {
@@ -77,8 +78,55 @@ def create_access_token(
         "country_code": country_code,
         "hedera_account_id": hedera_account_id,
         "exp": int(expiration.timestamp()),  # Expiration time
-        "iat": int(datetime.utcnow().timestamp()),  # Issued at
+        "iat": int(now.timestamp()),  # Issued at
         "type": "access"
+    }
+    
+    # Encode JWT token
+    token = jwt.encode(
+        payload,
+        settings.jwt_secret_key,
+        algorithm=settings.jwt_algorithm
+    )
+    
+    return token
+
+
+def create_refresh_token(
+    user_id: str,
+    email: str,
+    country_code: str,
+    hedera_account_id: Optional[str] = None
+) -> str:
+    """
+    Create JWT refresh token for authenticated user (long-lived)
+    
+    Args:
+        user_id: User's unique identifier
+        email: User's email address
+        country_code: User's country code
+        hedera_account_id: User's Hedera account ID (optional)
+        
+    Returns:
+        JWT refresh token string
+        
+    Requirements:
+        - FR-1.4: System shall use JWT tokens for session management
+        - NFR-2.3: Refresh tokens shall expire after 7 days
+    """
+    # Use timezone-aware datetime to avoid timezone issues
+    now = datetime.now(timezone.utc)
+    expiration = now + timedelta(days=7)
+    
+    # Create token payload
+    payload = {
+        "sub": user_id,  # Subject (user ID)
+        "email": email,
+        "country_code": country_code,
+        "hedera_account_id": hedera_account_id,
+        "exp": int(expiration.timestamp()),  # Expiration time
+        "iat": int(now.timestamp()),  # Issued at
+        "type": "refresh"
     }
     
     # Encode JWT token

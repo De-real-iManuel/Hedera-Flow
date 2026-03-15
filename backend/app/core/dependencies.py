@@ -2,7 +2,7 @@
 Authentication Dependencies
 FastAPI dependencies for JWT verification and user authentication
 """
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from typing import Optional
@@ -16,28 +16,28 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
-# HTTP Bearer token security scheme
+# HTTP Bearer token security scheme (kept for backward compatibility)
 security = HTTPBearer(auto_error=False)
 
 
 async def get_current_user(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    request: Request,
     db: Session = Depends(get_db)
 ) -> User:
     """
-    Verify JWT token and return current authenticated user
+    Verify JWT token from httpOnly cookie and return current authenticated user
     
     This dependency can be used to protect routes that require authentication.
-    It extracts the JWT token from the Authorization header, verifies it,
+    It extracts the JWT token from the httpOnly cookie, verifies it,
     and returns the authenticated user from the database.
     
     Requirements:
         - FR-1.4: System shall use JWT tokens for session management
         - NFR-2.1: All API endpoints shall require authentication (except public pages)
-        - NFR-2.3: JWT tokens shall expire after 30 days
+        - NFR-2.3: Access tokens shall expire after 15 minutes
     
     Args:
-        credentials: HTTP Bearer token from Authorization header
+        request: FastAPI request object to access cookies
         db: Database session
         
     Returns:
@@ -52,16 +52,16 @@ async def get_current_user(
         async def protected_route(current_user: User = Depends(get_current_user)):
             return {"user_id": current_user.id}
     """
-    # Check if credentials are provided
-    if not credentials:
-        logger.warning("Authentication failed: No credentials provided")
+    # Extract token from httpOnly cookie
+    token = request.cookies.get("access_token")
+    
+    if not token:
+        logger.warning("Authentication failed: No access token cookie provided")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
-    token = credentials.credentials
     
     try:
         # Decode and verify JWT token
@@ -157,7 +157,7 @@ async def get_current_user(
 
 
 async def get_current_user_optional(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    request: Request,
     db: Session = Depends(get_db)
 ) -> Optional[User]:
     """
@@ -167,7 +167,7 @@ async def get_current_user_optional(
     Useful for routes that have different behavior for authenticated vs anonymous users.
     
     Args:
-        credentials: HTTP Bearer token from Authorization header
+        request: FastAPI request object to access cookies
         db: Database session
         
     Returns:
@@ -180,11 +180,12 @@ async def get_current_user_optional(
                 return {"message": f"Hello {current_user.email}"}
             return {"message": "Hello anonymous user"}
     """
-    if not credentials:
+    token = request.cookies.get("access_token")
+    if not token:
         return None
     
     try:
-        return await get_current_user(credentials, db)
+        return await get_current_user(request, db)
     except HTTPException:
         # If authentication fails, return None instead of raising exception
         return None

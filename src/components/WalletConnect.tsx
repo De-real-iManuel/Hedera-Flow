@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Wallet, ExternalLink, CheckCircle, AlertCircle, Loader2 } from "lucide-react";
+import { Wallet, ExternalLink, CheckCircle, AlertCircle, Loader2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -21,6 +21,9 @@ function WalletConnect({ onConnect, onDisconnect, showBalance = true }: WalletCo
   const { toast } = useToast();
 
   useEffect(() => {
+    // Debug wallet detection
+    walletService.debugWalletDetection();
+    
     // Get available wallets on component mount
     const wallets = walletService.getAvailableWallets();
     setAvailableWallets(wallets);
@@ -80,6 +83,17 @@ function WalletConnect({ onConnect, onDisconnect, showBalance = true }: WalletCo
     }
   };
 
+  const refreshWallets = () => {
+    walletService.debugWalletDetection();
+    const wallets = walletService.getAvailableWallets();
+    setAvailableWallets(wallets);
+    
+    toast({
+      title: "Wallets Refreshed",
+      description: `Found ${wallets.length} wallet(s). Check console for debug info.`,
+    });
+  };
+
   const formatAccountId = (accountId: string) => {
     if (accountId.length <= 12) return accountId;
     return `${accountId.slice(0, 6)}...${accountId.slice(-6)}`;
@@ -102,13 +116,13 @@ function WalletConnect({ onConnect, onDisconnect, showBalance = true }: WalletCo
         <CardContent className="space-y-4">
           <div className="space-y-2">
             <div className="flex items-center justify-between text-sm">
-              <span className="text-green-700">Account ID:</span>
+              <span className="text-green-700">Address:</span>
               <div className="flex items-center gap-2">
                 <span className="font-mono text-green-900">
-                  {formatAccountId(currentConnection.accountId)}
+                  {formatAccountId(currentConnection.address)}
                 </span>
                 <a
-                  href={walletService.getAccountExplorerUrl(currentConnection.accountId)}
+                  href={walletService.getAccountExplorerUrl(currentConnection.address)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-green-600 hover:text-green-800"
@@ -146,7 +160,7 @@ function WalletConnect({ onConnect, onDisconnect, showBalance = true }: WalletCo
           Connect Wallet
         </CardTitle>
         <p className="text-sm text-muted-foreground">
-          Connect your Hedera wallet to make payments
+          Connect your wallet to make payments
         </p>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -156,17 +170,26 @@ function WalletConnect({ onConnect, onDisconnect, showBalance = true }: WalletCo
             <div>
               <p className="font-medium text-foreground">No Wallets Found</p>
               <p className="text-sm text-muted-foreground">
-                Please install a Hedera wallet extension
+                Please install MetaMask or use WalletConnect for mobile
               </p>
             </div>
             <div className="space-y-2">
               <p className="text-xs text-muted-foreground">Supported wallets:</p>
               <div className="flex flex-wrap gap-2 justify-center">
-                <Badge variant="outline">HashPack</Badge>
-                <Badge variant="outline">Blade Wallet</Badge>
-                <Badge variant="outline">Kabila</Badge>
+                <Badge variant="outline">MetaMask</Badge>
+                <Badge variant="outline">WalletConnect</Badge>
+                <Badge variant="outline">Mobile Wallets</Badge>
               </div>
             </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={refreshWallets}
+              className="mt-4"
+            >
+              <RefreshCw className="w-4 h-4 mr-2" />
+              Refresh Wallets
+            </Button>
           </div>
         ) : (
           <div className="space-y-2">

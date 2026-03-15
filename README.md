@@ -46,8 +46,23 @@ A comprehensive utility bill management platform built on Hedera Hashgraph, feat
 
 **Infrastructure:**
 - Docker containerization
-- Railway/Vercel deployment
+- Azure App Service (backend)
+- Vercel (frontend)
 - IPFS for receipt storage
+
+## 🚀 Quick Deployment
+
+### Backend (Azure)
+```cmd
+deploy-azure.bat
+```
+
+### Frontend (Vercel)
+```bash
+npx vercel --prod
+```
+
+See [AZURE_DEPLOYMENT_GUIDE.md](AZURE_DEPLOYMENT_GUIDE.md) for detailed instructions.
 
 ## 🚀 Quick Start
 

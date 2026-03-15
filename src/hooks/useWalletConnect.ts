@@ -163,21 +163,54 @@ export const useWalletConnect = () => {
   // Authenticate with backend
   const authenticateWithBackend = useCallback(async (accountId: string, walletType: 'hashpack' | 'blade') => {
     try {
+      console.log(`Starting authentication for ${walletType} wallet:`, accountId);
+      
       // Create a message to sign
       const message = `Hedera Flow Authentication\nAccount: ${accountId}\nTimestamp: ${Date.now()}`;
+      console.log('Message to sign:', message);
       
       // Request signature from wallet
       let signature: string;
       
       if (walletType === 'hashpack') {
-        const signResult = await hashConnect.signMessage(message);
-        signature = signResult.signature;
+        console.log('Requesting signature from HashPack...');
+        try {
+          const signResult = await hashConnect.signMessage(message);
+          console.log('HashPack sign result:', signResult);
+          signature = signResult.signature;
+          
+          if (!signature) {
+            throw new Error('No signature received from HashPack');
+          }
+        } catch (signError) {
+          console.error('HashPack signing failed:', signError);
+          toast.error('Failed to sign message with HashPack', {
+            description: 'Please try connecting again'
+          });
+          throw signError;
+        }
       } else {
         // Blade wallet signature
-        const bladeConnect = (window as any).bladeConnect;
-        const signResult = await bladeConnect.signMessage(message);
-        signature = signResult.signature;
+        console.log('Requesting signature from Blade...');
+        try {
+          const bladeConnect = (window as any).bladeConnect;
+          const signResult = await bladeConnect.signMessage(message);
+          console.log('Blade sign result:', signResult);
+          signature = signResult.signature;
+          
+          if (!signature) {
+            throw new Error('No signature received from Blade');
+          }
+        } catch (signError) {
+          console.error('Blade signing failed:', signError);
+          toast.error('Failed to sign message with Blade', {
+            description: 'Please try connecting again'
+          });
+          throw signError;
+        }
       }
+
+      console.log('Signature obtained, sending to backend...');
 
       // Send to backend for verification
       const response = await authApi.walletConnect({
@@ -186,19 +219,45 @@ export const useWalletConnect = () => {
         message,
       });
 
-      // Store token
-      localStorage.setItem('auth_token', response.token);
-      localStorage.setItem('user', JSON.stringify(response.user));
+      console.log('Backend authentication successful:', response);
 
-      toast.success('Successfully authenticated!');
+      // No need to store token - it's in httpOnly cookie
+      toast.success('Successfully authenticated!', {
+        description: 'Redirecting to home page...'
+      });
       
-      // Redirect to dashboard
-      window.location.href = '/dashboard';
+      // Redirect to home page
+      setTimeout(() => {
+        window.location.href = '/home';
+      }, 1000);
       
       return response;
     } catch (error: any) {
       console.error('Backend authentication failed:', error);
-      toast.error(error.response?.data?.detail || 'Authentication failed');
+      
+      // More specific error messages
+      if (error.response?.status === 401) {
+        toast.error('Authentication failed', {
+          description: 'Invalid signature or account not found'
+        });
+      } else if (error.response?.status === 400) {
+        toast.error('Invalid request', {
+          description: error.response?.data?.detail || 'Please check your wallet connection'
+        });
+      } else {
+        toast.error('Authentication failed', {
+          description: error.response?.data?.detail || error.message || 'Please try again'
+        });
+      }
+      
+      // Reset connection state on failure
+      setWalletState(prev => ({
+        ...prev,
+        isConnected: false,
+        accountId: null,
+        walletType: null,
+      }));
+      
       throw error;
     }
   }, [hashConnect]);

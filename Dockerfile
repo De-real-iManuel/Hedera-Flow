@@ -1,36 +1,34 @@
-# Multi-stage build for production
-FROM node:18-alpine AS frontend-build
+# Backend-only Dockerfile for Azure deployment
+FROM python:3.11-slim
 
 WORKDIR /app
-COPY package*.json ./
-RUN npm ci --only=production
-COPY . .
-RUN npm run build
-
-# Python backend
-FROM python:3.11-slim AS backend
-
-WORKDIR /app/backend
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
     libpq-dev \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install Python dependencies
 COPY backend/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
 # Copy backend code
 COPY backend/ .
 
-# Copy built frontend
-COPY --from=frontend-build /app/dist /app/frontend/dist
+# Create non-root user for security
+RUN useradd --create-home --shell /bin/bash app && chown -R app:app /app
+USER app
 
 # Expose port
 EXPOSE 8000
 
+# Health check
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:8000/health || exit 1
+
 # Start command
-CMD ["uvicorn", "app.core.app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "app.core.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

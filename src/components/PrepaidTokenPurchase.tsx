@@ -92,7 +92,6 @@ export function PrepaidTokenPurchase({
 
   const handlePurchase = async () => {
     console.log('Purchase started - User:', user?.email, 'Meter ID:', meterId);
-    console.log('Auth token in localStorage:', localStorage.getItem('auth_token') ? 'Present' : 'Missing');
     console.log('Preview data:', preview);
     
     // Validate meter ID format
