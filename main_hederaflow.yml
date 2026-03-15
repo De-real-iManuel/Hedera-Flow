@@ -1,0 +1,143 @@
+# Hedera Flow - Main Deployment Configuration
+# This file defines the complete deployment pipeline for the Hedera Flow application
+
+name: Hedera Flow - Main Deployment Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  AZURE_WEBAPP_NAME: hedera-flow-api
+  AZURE_WEBAPP_PACKAGE_PATH: './backend'
+  PYTHON_VERSION: '3.11'
+  NODE_VERSION: '18'
+
+jobs:
+  # Backend Testing and Deployment
+  backend-deploy:
+    name: Deploy Backend to Azure
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Cache Python dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('backend/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+    
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r backend/requirements.txt
+    
+    - name: Run backend tests (if available)
+      run: |
+        cd backend
+        # Add test commands here when tests are available
+        # python -m pytest tests/ -v
+        echo "Backend tests would run here"
+    
+    - name: Deploy to Azure Web App
+      if: github.ref == 'refs/heads/main'
+      uses: azure/webapps-deploy@v2
+      with:
+        app-name: ${{ env.AZURE_WEBAPP_NAME }}
+        publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+        package: ${{ env.AZURE_WEBAPP_PACKAGE_PATH }}
+
+  # Frontend Build and Deploy
+  frontend-build:
+    name: Build and Deploy Frontend
+    runs-on: ubuntu-latest
+    needs: backend-deploy
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: npm ci
+    
+    - name: Create production environment file
+      run: |
+        echo "VITE_API_BASE_URL=https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net" > .env.production
+        echo "VITE_HEDERA_NETWORK=testnet" >> .env.production
+        echo "VITE_ENVIRONMENT=production" >> .env.production
+    
+    - name: Build frontend
+      run: npm run build
+    
+    - name: Deploy to Vercel
+      if: github.ref == 'refs/heads/main'
+      uses: amondnet/vercel-action@v25
+      with:
+        vercel-token: ${{ secrets.VERCEL_TOKEN }}
+        vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+        vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+        working-directory: ./
+        vercel-args: '--prod'
+
+  # Health Check and Notification
+  health-check:
+    name: Post-Deployment Health Check
+    runs-on: ubuntu-latest
+    needs: [backend-deploy, frontend-build]
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Wait for deployment
+      run: sleep 60
+    
+    - name: Check backend health
+      run: |
+        curl -f https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net/health || exit 1
+        echo "✅ Backend health check passed"
+    
+    - name: Check API documentation
+      run: |
+        curl -f https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net/docs || exit 1
+        echo "✅ API documentation accessible"
+    
+    - name: Deployment Summary
+      run: |
+        echo "🎉 Hedera Flow Deployment Complete!"
+        echo "🔗 Backend API: https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net"
+        echo "📚 API Docs: https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net/docs"
+        echo "🔍 Health Check: https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net/health"
+
+# Required GitHub Secrets:
+# - AZURE_WEBAPP_PUBLISH_PROFILE: Azure App Service publish profile
+# - VERCEL_TOKEN: Vercel deployment token
+# - VERCEL_ORG_ID: Vercel organization ID
+# - VERCEL_PROJECT_ID: Vercel project ID
+
+# Environment Variables (set in Azure App Service):
+# - ENVIRONMENT=production
+# - DEBUG=false
+# - HEDERA_NETWORK=testnet
+# - HEDERA_OPERATOR_ID=0.0.xxxxx
+# - HEDERA_OPERATOR_KEY=your_private_key
+# - JWT_SECRET_KEY=your_secure_jwt_secret
+# - DATABASE_URL=sqlite:///./hedera_flow.db
+# - REDIS_URL=redis://localhost:6379
+# - CORS_ORIGINS=https://your-frontend.vercel.app,http://localhost:5173
