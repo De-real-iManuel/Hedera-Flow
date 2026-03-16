@@ -35,10 +35,21 @@ class HederaService:
     def _setup_client(self):
         """Setup Hedera client with operator account"""
         try:
-            # Suppress verbose logging from Hedera SDK
+            # Check Java environment
             import os
+            java_home = os.environ.get('JAVA_HOME')
+            logger.info(f"JAVA_HOME: {java_home}")
+            
+            # Suppress verbose logging from Hedera SDK
             os.environ['KIVY_LOG_MODE'] = 'PYTHON'
             os.environ['KIVY_NO_CONSOLELOG'] = '1'
+            
+            # Additional Java environment setup for hedera-sdk-py
+            if java_home:
+                os.environ['JDK_HOME'] = java_home
+                os.environ['PATH'] = f"{java_home}/bin:{os.environ.get('PATH', '')}"
+            
+            logger.info("Initializing Hedera client...")
             
             # Create client for testnet or mainnet
             if settings.hedera_network == "testnet":
@@ -59,6 +70,8 @@ class HederaService:
             
         except Exception as e:
             logger.error(f"Failed to initialize Hedera client: {e}")
+            logger.error(f"Java environment: JAVA_HOME={os.environ.get('JAVA_HOME')}")
+            logger.error(f"PATH includes: {os.environ.get('PATH', '')[:200]}...")
             raise
     
     def create_account(self, initial_balance: float = 10.0) -> Tuple[str, str]:
