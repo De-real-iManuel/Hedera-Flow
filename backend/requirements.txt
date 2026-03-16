@@ -33,7 +33,7 @@ protobuf>=6.33.5  # Required for Python 3.14
 ipfshttpclient==0.8.0a2
 
 # Exchange Rate APIs
-requests==2.31.0
+requests==2.32.5
 
 # Image Processing
 pillow==12.1.1  # Updated for Python 3.14 compatibility
