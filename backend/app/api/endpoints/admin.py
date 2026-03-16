@@ -100,6 +100,50 @@ async def seed_database():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error seeding database: {str(e)}")
 
+@router.post("/fix-schema")
+async def fix_schema():
+    """Fix missing schema columns"""
+    try:
+        engine = create_engine(settings.database_url)
+        
+        with engine.connect() as conn:
+            # Add missing hedera_account_id column to utility_providers
+            try:
+                conn.execute(text("""
+                    ALTER TABLE utility_providers 
+                    ADD COLUMN IF NOT EXISTS hedera_account_id VARCHAR(50)
+                """))
+                
+                # Create index
+                conn.execute(text("""
+                    CREATE INDEX IF NOT EXISTS idx_utility_providers_hedera_account 
+                    ON utility_providers(hedera_account_id)
+                """))
+                
+                # Set default value for existing records
+                conn.execute(text("""
+                    UPDATE utility_providers 
+                    SET hedera_account_id = '0.0.7942957'
+                    WHERE hedera_account_id IS NULL
+                """))
+                
+                conn.commit()
+                
+                return {
+                    "success": True,
+                    "message": "Schema fixed successfully",
+                    "changes": ["Added hedera_account_id column to utility_providers"]
+                }
+                
+            except Exception as e:
+                return {
+                    "success": False,
+                    "message": f"Error fixing schema: {str(e)}"
+                }
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fixing schema: {str(e)}")
+
 @router.get("/status")
 async def database_status():
     """Check database status"""
