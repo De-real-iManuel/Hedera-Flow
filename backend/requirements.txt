@@ -23,8 +23,9 @@ pyjwt==2.8.0
 # Cryptography (for smart meter signatures)
 cryptography==42.0.5
 
-# Hedera SDK
-hedera-sdk-py==2.21.0  # Official Hedera SDK for Python (wrapper around Java SDK)
+# Hedera SDK (New Rust-based SDK - no Java required)
+hedera-agent-kit
+hiero-sdk-python
 
 # Google Cloud Vision (OCR)
 google-cloud-vision==3.12.1  # Updated for Python 3.14 compatibility
