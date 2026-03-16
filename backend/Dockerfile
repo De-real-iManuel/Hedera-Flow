@@ -16,8 +16,17 @@ ENV PATH="$JAVA_HOME/bin:$PATH"
 ENV JDK_HOME=$JAVA_HOME
 ENV CLASSPATH="$JAVA_HOME/lib/*:."
 
-# Verify Java installation
-RUN java -version && javac -version
+# Create symlinks to ensure javac is found
+RUN ln -sf $JAVA_HOME/bin/javac /usr/bin/javac
+RUN ln -sf $JAVA_HOME/bin/java /usr/bin/java
+
+# Verify Java installation and show paths
+RUN echo "JAVA_HOME: $JAVA_HOME" && \
+    echo "PATH: $PATH" && \
+    which java && \
+    which javac && \
+    java -version && \
+    javac -version
 
 # Copy requirements first for better caching
 COPY requirements.txt .
@@ -31,6 +40,11 @@ RUN chmod +x start.py
 
 # Copy application code
 COPY . .
+
+# Set runtime Java environment variables
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+ENV PATH="$JAVA_HOME/bin:$PATH"
+ENV JDK_HOME=$JAVA_HOME
 
 # Expose port
 EXPOSE 8000

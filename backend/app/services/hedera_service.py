@@ -35,19 +35,35 @@ class HederaService:
     def _setup_client(self):
         """Setup Hedera client with operator account"""
         try:
-            # Check Java environment
+            # Check and set Java environment
             import os
             java_home = os.environ.get('JAVA_HOME')
             logger.info(f"JAVA_HOME: {java_home}")
             
-            # Suppress verbose logging from Hedera SDK
-            os.environ['KIVY_LOG_MODE'] = 'PYTHON'
-            os.environ['KIVY_NO_CONSOLELOG'] = '1'
+            # Ensure Java environment is properly set
+            if not java_home:
+                # Try to find Java automatically
+                possible_java_homes = [
+                    '/usr/lib/jvm/java-17-openjdk-amd64',
+                    '/usr/lib/jvm/java-11-openjdk-amd64',
+                    '/usr/lib/jvm/default-java'
+                ]
+                for path in possible_java_homes:
+                    if os.path.exists(f"{path}/bin/javac"):
+                        java_home = path
+                        os.environ['JAVA_HOME'] = java_home
+                        logger.info(f"Found Java at: {java_home}")
+                        break
             
-            # Additional Java environment setup for hedera-sdk-py
             if java_home:
                 os.environ['JDK_HOME'] = java_home
                 os.environ['PATH'] = f"{java_home}/bin:{os.environ.get('PATH', '')}"
+                logger.info(f"Set JAVA_HOME to: {java_home}")
+                logger.info(f"javac exists: {os.path.exists(f'{java_home}/bin/javac')}")
+            
+            # Suppress verbose logging from Hedera SDK
+            os.environ['KIVY_LOG_MODE'] = 'PYTHON'
+            os.environ['KIVY_NO_CONSOLELOG'] = '1'
             
             logger.info("Initializing Hedera client...")
             
@@ -72,6 +88,14 @@ class HederaService:
             logger.error(f"Failed to initialize Hedera client: {e}")
             logger.error(f"Java environment: JAVA_HOME={os.environ.get('JAVA_HOME')}")
             logger.error(f"PATH includes: {os.environ.get('PATH', '')[:200]}...")
+            # List available Java installations
+            try:
+                import subprocess
+                result = subprocess.run(['find', '/usr/lib/jvm', '-name', 'javac'], 
+                                      capture_output=True, text=True)
+                logger.error(f"Available javac locations: {result.stdout}")
+            except:
+                pass
             raise
     
     def create_account(self, initial_balance: float = 10.0) -> Tuple[str, str]:
