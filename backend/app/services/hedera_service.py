@@ -35,6 +35,11 @@ class HederaService:
     def _setup_client(self):
         """Setup Hedera client with operator account"""
         try:
+            # Suppress verbose logging from Hedera SDK
+            import os
+            os.environ['KIVY_LOG_MODE'] = 'PYTHON'
+            os.environ['KIVY_NO_CONSOLELOG'] = '1'
+            
             # Create client for testnet or mainnet
             if settings.hedera_network == "testnet":
                 self.client = Client.forTestnet()
@@ -298,6 +303,12 @@ def get_hedera_service() -> HederaService:
     global _hedera_service
     
     if _hedera_service is None:
-        _hedera_service = HederaService()
+        try:
+            _hedera_service = HederaService()
+        except Exception as e:
+            logger.error(f"Failed to initialize Hedera service: {e}")
+            # For now, re-raise the exception to make the issue visible
+            # In production, you might want to return a mock service instead
+            raise
     
     return _hedera_service
