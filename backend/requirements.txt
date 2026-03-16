@@ -24,8 +24,7 @@ pyjwt==2.8.0
 cryptography==42.0.5
 
 # Hedera SDK (New Rust-based SDK - no Java required)
-# hedera-agent-kit  # Temporarily removed due to dependency conflicts
-hiero-sdk-python
+# hiero-sdk-python  # Temporarily disabled for initial deployment
 
 # Google Cloud Vision (OCR)
 google-cloud-vision==3.12.1  # Updated for Python 3.14 compatibility
