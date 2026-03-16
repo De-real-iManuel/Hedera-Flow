@@ -15,8 +15,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy startup script
-COPY start.sh .
-RUN chmod +x start.sh
+COPY start.py .
+RUN chmod +x start.py
 
 # Copy application code
 COPY . .
@@ -25,4 +25,4 @@ COPY . .
 EXPOSE 8000
 
 # Start command
-CMD ["./start.sh"]
+CMD ["python3", "start.py"]
