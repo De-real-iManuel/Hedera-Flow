@@ -1,16 +1,15 @@
 """
 Hedera Service
-Handles Hedera account creation and management using the new Hiero SDK (Rust-based, no Java required)
+Handles Hedera account creation and management using the Java-based Hedera SDK
 """
-from hiero_sdk_python import (
+from hedera import (
     Client,
-    Network,
-    PrivateKey,
-    PublicKey,
-    AccountCreateTransaction,
     AccountBalanceQuery,
+    TransferTransaction,
     Hbar,
     AccountId,
+    PrivateKey,
+    AccountCreateTransaction,
     AccountInfoQuery,
     TopicId,
     TopicMessageSubmitTransaction
@@ -38,17 +37,17 @@ class HederaService:
         try:
             # Create client for testnet or mainnet
             if settings.hedera_network == "testnet":
-                self.client = Client(Network(network="testnet"))
+                self.client = Client.forTestnet()
             elif settings.hedera_network == "mainnet":
-                self.client = Client(Network(network="mainnet"))
+                self.client = Client.forMainnet()
             else:
                 raise ValueError(f"Invalid Hedera network: {settings.hedera_network}")
             
             # Set operator account
-            operator_id = AccountId.from_string(settings.hedera_operator_id)
-            operator_key = PrivateKey.from_string(settings.hedera_operator_key)
+            operator_id = AccountId.fromString(settings.hedera_operator_id)
+            operator_key = PrivateKey.fromString(settings.hedera_operator_key)
             
-            self.client.set_operator(operator_id, operator_key)
+            self.client.setOperator(operator_id, operator_key)
             
             logger.info(f"Hedera client initialized for {settings.hedera_network}")
             logger.info(f"Operator account: {settings.hedera_operator_id}")
@@ -82,8 +81,8 @@ class HederaService:
             transaction = (
                 AccountCreateTransaction()
                 .setKey(new_public_key)
-                .setInitialBalance(Hbar(initial_balance))
-                .setMaxTransactionFee(Hbar(2))  # Max fee for account creation
+                .setInitialBalance(Hbar.fromTinybars(int(initial_balance * 100_000_000)))  # Convert HBAR to tinybars
+                .setMaxTransactionFee(Hbar.fromTinybars(200_000_000))  # 2 HBAR max fee
             )
             
             # Execute transaction
@@ -118,10 +117,10 @@ class HederaService:
             Account balance in HBAR
         """
         try:
-            account = AccountId.from_string(account_id)
-            balance = AccountBalanceQuery().set_account_id(account).execute(self.client)
+            account = AccountId.fromString(account_id)
+            balance = AccountBalanceQuery().setAccountId(account).execute(self.client)
             
-            return float(balance.hbars.to_string())
+            return float(balance.hbars.toString())
             
         except Exception as e:
             logger.error(f"Failed to get account balance: {e}")
@@ -148,8 +147,8 @@ class HederaService:
         """
         try:
             # Get account info to retrieve public key
-            account = AccountId.from_string(account_id)
-            query = AccountInfoQuery().set_account_id(account)
+            account = AccountId.fromString(account_id)
+            query = AccountInfoQuery().setAccountId(account)
             account_info = query.execute(self.client)
             
             # Get the account's public key
@@ -182,8 +181,8 @@ class HederaService:
             True if account exists, False otherwise
         """
         try:
-            account = AccountId.from_string(account_id)
-            query = AccountInfoQuery().set_account_id(account)
+            account = AccountId.fromString(account_id)
+            query = AccountInfoQuery().setAccountId(account)
             query.execute(self.client)
             return True
         except Exception as e:
@@ -249,19 +248,19 @@ class HederaService:
             message_json = json.dumps(payment_log)
             
             # Parse topic ID
-            topic = TopicId.from_string(topic_id)
+            topic = TopicId.fromString(topic_id)
             
             # Create and execute transaction
             transaction = (
                 TopicMessageSubmitTransaction()
-                .set_topic_id(topic)
-                .set_message(message_json)
+                .setTopicId(topic)
+                .setMessage(message_json)
             )
             
             response = transaction.execute(self.client)
-            receipt = response.get_receipt(self.client)
+            receipt = response.getReceipt(self.client)
             
-            sequence_number = receipt.topic_sequence_number
+            sequence_number = receipt.topicSequenceNumber
             
             logger.info(f"✅ Payment logged to HCS topic {topic_id}")
             logger.info(f"   Sequence Number: {sequence_number}")
