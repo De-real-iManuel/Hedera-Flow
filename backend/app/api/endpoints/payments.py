@@ -26,7 +26,7 @@ from app.models.user import User
 from app.models.bill import Bill
 from app.models.meter import Meter
 from app.models.utility_provider import UtilityProvider
-from app.services.hedera_service import get_hedera_service
+# from app.services.hedera_service import get_hedera_service  # Temporarily disabled
 
 logger = logging.getLogger(__name__)
 
