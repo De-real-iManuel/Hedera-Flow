@@ -9,6 +9,7 @@ from datetime import datetime
 from decimal import Decimal
 from enum import Enum
 from .bills import BillSummary
+from .bills import BillSummary
 
 
 class VerificationStatus(str, Enum):
