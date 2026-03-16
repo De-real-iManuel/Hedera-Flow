@@ -304,7 +304,7 @@ async def confirm_payment(
         AmountMismatchError,
         InvalidTransferError
     )
-    from app.services.hedera_service import get_hedera_service
+    # from app.services.hedera_service import get_hedera_service  # Temporarily disabled
     import os
     
     # Get treasury account

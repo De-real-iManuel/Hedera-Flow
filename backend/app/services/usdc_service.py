@@ -133,7 +133,7 @@ class USDCService:
         """
         try:
             from hedera import AccountBalanceQuery, AccountId, TokenId
-            from app.services.hedera_service import get_hedera_service
+            # from app.services.hedera_service import get_hedera_service  # Temporarily disabled
             
             self.logger.info(f"Checking Hedera USDC balance for account {account_id}")
             

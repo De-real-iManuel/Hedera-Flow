@@ -23,7 +23,7 @@ import time
 
 from app.services.tariff_service import get_tariff, TariffNotFoundError
 from app.services.exchange_rate_service import get_hbar_price
-from app.services.hedera_service import get_hedera_service
+# from app.services.hedera_service import get_hedera_service  # Temporarily disabled
 from app.services.sts_token_generator import STSTokenGenerator
 
 logger = logging.getLogger(__name__)

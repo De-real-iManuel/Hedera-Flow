@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     debug: bool = True
     
     # Database (Supabase PostgreSQL)
-    database_url: str
+    database_url: Optional[str] = None
     db_pool_size: int = 20
     db_max_overflow: int = 10
     db_pool_timeout: int = 30
@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     supabase_service_role_key: Optional[str] = None
     
     # Redis (Upstash or local)
-    redis_url: str
+    redis_url: Optional[str] = None
     
     # JWT
     jwt_secret_key: str
@@ -44,8 +44,8 @@ class Settings(BaseSettings):
     
     # Hedera
     hedera_network: str = "testnet"
-    hedera_operator_id: str
-    hedera_operator_key: str
+    hedera_operator_id: Optional[str] = None
+    hedera_operator_key: Optional[str] = None
     hedera_treasury_id: Optional[str] = None
     hedera_treasury_key: Optional[str] = None
     
@@ -94,6 +94,11 @@ class Settings(BaseSettings):
 
 # Global settings instance
 settings = Settings()
+
+# Handle Railway's DATABASE_URL environment variable
+if not settings.database_url and os.getenv('DATABASE_URL'):
+    settings.database_url = os.getenv('DATABASE_URL')
+    print(f"Using Railway DATABASE_URL: {settings.database_url[:50]}...")
 
 # Set Google Cloud credentials environment variable if configured
 if settings.google_application_credentials:
