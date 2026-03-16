@@ -148,20 +148,7 @@ async def fix_schema():
 async def test_hedera():
     """Test Hedera SDK integration"""
     try:
-        # Check if Hedera SDK is available
-        try:
-            from app.services.hedera_service import get_hedera_service
-            hedera_available = True
-        except ImportError:
-            hedera_available = False
-        
-        if not hedera_available:
-            return {
-                "success": False,
-                "message": "Hedera SDK is temporarily disabled",
-                "status": "disabled",
-                "reason": "SDK dependencies being resolved"
-            }
+        from app.services.hedera_service import get_hedera_service
         
         hedera_service = get_hedera_service()
         

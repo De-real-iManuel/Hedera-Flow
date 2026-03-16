@@ -784,7 +784,7 @@ class SmartMeterService:
 
                     # Submit to HCS
                     # Requirements: FR-9.8 (Log consumption to HCS with tag SMART_METER_CONSUMPTION)
-                    # from app.services.hedera_service import HederaService  # Temporarily disabled
+                    from app.services.hedera_service import HederaService
                     
                     hedera_service = HederaService()
 

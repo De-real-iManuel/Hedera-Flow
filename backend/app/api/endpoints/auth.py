@@ -14,7 +14,7 @@ from app.core.dependencies import get_current_user as get_current_user_dependenc
 from app.schemas.auth import RegisterRequest, LoginRequest, WalletConnectRequest, AuthResponse, UserResponse
 from app.models.user import User, CountryCodeEnum, WalletTypeEnum
 from app.utils.auth import hash_password, create_access_token, create_refresh_token, validate_password_strength, decode_access_token
-# from app.services.hedera_service import get_hedera_service  # Temporarily disabled
+from app.services.hedera_service import get_hedera_service
 from config import settings
 
 logger = logging.getLogger(__name__)
