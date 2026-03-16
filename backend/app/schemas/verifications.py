@@ -8,6 +8,7 @@ from typing import Optional, List
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
+from .bills import BillSummary
 
 
 class VerificationStatus(str, Enum):
@@ -85,14 +86,3 @@ class VerificationSummary(BaseModel):
     class Config:
         from_attributes = True
 
-
-class BillSummary(BaseModel):
-    """Bill summary included in verification response"""
-    id: str
-    total_fiat: Decimal
-    currency: str
-    amount_hbar: Optional[Decimal]
-    exchange_rate: Optional[Decimal]
-    
-    class Config:
-        from_attributes = True

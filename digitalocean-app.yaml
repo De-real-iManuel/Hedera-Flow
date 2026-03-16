@@ -1,0 +1,26 @@
+name: hedera-flow
+services:
+- name: backend
+  source_dir: backend
+  github:
+    repo: your-username/hedera-flow
+    branch: main
+  run_command: uvicorn app.core.app:app --host 0.0.0.0 --port $PORT
+  environment_slug: python
+  instance_count: 1
+  instance_size_slug: basic-xxs
+  envs:
+  - key: ENVIRONMENT
+    value: production
+  - key: DEBUG
+    value: "false"
+  - key: HEDERA_NETWORK
+    value: testnet
+  - key: JWT_SECRET_KEY
+    value: hackathon_jwt_secret_2024
+  - key: DATABASE_URL
+    value: sqlite:///./hedera_flow.db
+  - key: REDIS_URL
+    value: redis://localhost:6379
+  - key: CORS_ORIGINS
+    value: https://*.vercel.app,http://localhost:5173
