@@ -144,6 +144,32 @@ async def fix_schema():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fixing schema: {str(e)}")
 
+@router.get("/test-hedera")
+async def test_hedera():
+    """Test Hedera SDK integration"""
+    try:
+        from app.services.hedera_service import get_hedera_service
+        
+        hedera_service = get_hedera_service()
+        
+        # Test basic functionality - check if we can get account balance
+        operator_balance = hedera_service.get_account_balance("0.0.7942957")
+        
+        return {
+            "success": True,
+            "message": "Hedera SDK is working",
+            "operator_account": "0.0.7942957",
+            "operator_balance": f"{operator_balance} HBAR",
+            "network": "testnet"
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Hedera SDK error: {str(e)}",
+            "error_type": type(e).__name__
+        }
+
 @router.get("/status")
 async def database_status():
     """Check database status"""
