@@ -26,7 +26,7 @@ from app.services.fraud_detection_service import get_fraud_detection_service
 from app.services.ipfs_service import get_ipfs_service
 from app.services.billing_service import calculate_bill_with_tariff_fetch, BillingCalculationError
 from app.services.exchange_rate_service import get_hbar_price
-# from app.utils.hedera_client import hedera_client  # Temporarily disabled
+from app.services.hedera_service import get_hedera_service
 from config import settings
 
 router = APIRouter()
