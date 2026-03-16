@@ -1,8 +1,8 @@
 # FastAPI Core
 fastapi==0.109.0
 uvicorn[standard]==0.27.0
-pydantic>=2.12.3
-pydantic-settings>=2.1.0
+pydantic==2.5.3
+pydantic-settings==2.1.0
 email-validator==2.1.0  # Required for EmailStr validation
 
 # Database
@@ -24,7 +24,7 @@ pyjwt==2.8.0
 cryptography==42.0.5
 
 # Hedera SDK (New Rust-based SDK - no Java required)
-hedera-agent-kit
+# hedera-agent-kit  # Temporarily removed due to dependency conflicts
 hiero-sdk-python
 
 # Google Cloud Vision (OCR)
@@ -44,7 +44,7 @@ numpy>=2.4.2  # For fraud detection (ELA analysis)
 # Utilities
 python-dotenv==1.0.0
 httpx==0.26.0
-aiohttp>=3.13.1  # For Mirror Node async HTTP requests (updated for hedera-agent-kit compatibility)
+aiohttp==3.9.1  # For Mirror Node async HTTP requests
 
 # Email
 sendgrid==6.11.0
