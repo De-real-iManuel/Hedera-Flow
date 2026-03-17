@@ -29,6 +29,7 @@ dist-ssr
 .env.production
 backend/.env
 backend/.env.test
+backend/tests/.env.test
 backend/.env.supabase.example
 
 # Documentation and task files (excluding README and QUICKSTART)

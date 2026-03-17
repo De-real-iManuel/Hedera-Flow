@@ -31,7 +31,7 @@ const ApiTestPage = () => {
           
           <div className="space-y-2">
             <p className="text-sm text-muted-foreground">
-              Backend URL: {import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'}
+              Backend URL: {import.meta.env.VITE_API_BASE_URL || 'https://hedera-flow-github-production.up.railway.app/api'}
             </p>
             <p className="text-sm text-muted-foreground">
               Status: <span className="font-medium text-foreground">{status}</span>
