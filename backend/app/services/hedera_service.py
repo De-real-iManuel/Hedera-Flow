@@ -31,7 +31,7 @@ if not USE_MOCK_MODE:
         )
         logger.info("✅ Real Hedera SDK imported successfully")
         HEDERA_SDK_AVAILABLE = True
-    except Exception as e:
+    except BaseException as e:
         logger.warning(f"⚠️ Failed to import Hedera SDK: {e}")
         logger.warning("🎭 Falling back to mock mode")
         USE_MOCK_MODE = True
@@ -114,7 +114,7 @@ class HederaService:
             logger.info(f"Hedera client initialized for {settings.hedera_network}")
             logger.info(f"Operator account: {settings.hedera_operator_id}")
             
-        except Exception as e:
+        except BaseException as e:
             logger.error(f"Failed to initialize Hedera client: {e}")
             logger.warning("🎭 Falling back to MOCK MODE due to initialization error")
             self.mock_mode = True
