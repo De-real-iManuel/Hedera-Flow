@@ -136,9 +136,13 @@ def configure_cors(app: FastAPI) -> None:
         allowed_origins = list(set(development_origins + custom_origins))
     
     # Add CORS middleware
+    # Also allow any *.vercel.app subdomain for Vercel preview deployments
+    vercel_origins = [o for o in allowed_origins if 'vercel.app' in o]
+    
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allowed_origins,
+        allow_origin_regex=r"https://.*\.vercel\.app",  # all Vercel preview URLs
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
