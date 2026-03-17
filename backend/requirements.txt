@@ -42,6 +42,10 @@ qrcode[pil]==8.0
 # Rate Limiting
 slowapi==0.1.9
 
+# AWS SDK
+boto3==1.34.0
+botocore==1.34.0
+
 # HTTP clients
 httpx==0.26.0
 aiohttp==3.9.1

@@ -11,28 +11,21 @@ const AuthGuard = ({ children }: AuthGuardProps) => {
   const { user, isLoading, error } = useAuth();
 
   useEffect(() => {
-    // If there's an authentication error (401), redirect to auth page
-    if (error?.response?.status === 401) {
+    if (!isLoading && !user) {
       navigate('/auth');
     }
-  }, [error, navigate]);
+  }, [isLoading, user, error, navigate]);
 
-  // Show loading state while checking authentication
   if (isLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
       </div>
     );
   }
 
-  // If no user and not loading, redirect to auth
-  if (!user && !isLoading) {
-    navigate('/auth');
-    return null;
-  }
+  if (!user) return null;
 
-  // User is authenticated, render children
   return <>{children}</>;
 };
 

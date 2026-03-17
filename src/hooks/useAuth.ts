@@ -11,12 +11,13 @@ export const useAuth = () => {
   const { data: user, isLoading, error } = useQuery({
     queryKey: ['user'],
     queryFn: authApi.getCurrentUser,
+    staleTime: 5 * 60 * 1000, // 5 minutes - avoid refetching on every mount
     retry: (failureCount, error: any) => {
       // Don't retry on 401 errors (unauthenticated)
       if (error?.response?.status === 401) {
         return false;
       }
-      return failureCount < 3;
+      return failureCount < 2;
     },
   });
 
