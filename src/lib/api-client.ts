@@ -38,9 +38,16 @@ apiClient.interceptors.response.use(
   async (error: AxiosError) => {
     const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
 
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    // Don't attempt refresh if:
+    // - the failing request is the refresh endpoint itself (avoid infinite loop)
+    // - the failing request is /auth/me (getCurrentUser on unauthenticated pages is expected)
+    // - we're already on the auth page
+    const isRefreshEndpoint = originalRequest.url?.includes('/auth/refresh-token');
+    const isGetMeEndpoint = originalRequest.url?.includes('/auth/me');
+    const isOnAuthPage = window.location.pathname === '/auth';
+
+    if (error.response?.status === 401 && !originalRequest._retry && !isRefreshEndpoint && !isGetMeEndpoint && !isOnAuthPage) {
       if (isRefreshing) {
-        // If we're already refreshing, queue this request
         return new Promise((resolve, reject) => {
           failedQueue.push({ resolve, reject });
         }).then(() => {
@@ -54,17 +61,15 @@ apiClient.interceptors.response.use(
       isRefreshing = true;
 
       try {
-        // Attempt to refresh the token
         await apiClient.post('/auth/refresh-token');
         processQueue(null);
-        
-        // Retry the original request
         return apiClient(originalRequest);
       } catch (refreshError) {
         processQueue(refreshError, null);
-        
-        // Refresh failed, redirect to auth page
-        window.location.href = '/auth';
+        // Only redirect if not already heading there
+        if (window.location.pathname !== '/auth') {
+          window.location.href = '/auth';
+        }
         return Promise.reject(refreshError);
       } finally {
         isRefreshing = false;

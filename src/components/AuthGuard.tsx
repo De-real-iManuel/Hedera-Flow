@@ -11,8 +11,13 @@ const AuthGuard = ({ children }: AuthGuardProps) => {
   const { user, isLoading, error } = useAuth();
 
   useEffect(() => {
-    if (!isLoading && !user) {
-      navigate('/auth');
+    if (!isLoading) {
+      // 401 means not authenticated — redirect to auth
+      // Other errors (network, 500) — don't redirect, let the page handle it
+      const is401 = (error as any)?.response?.status === 401;
+      if (!user && (is401 || !error)) {
+        navigate('/auth');
+      }
     }
   }, [isLoading, user, error, navigate]);
 

@@ -124,12 +124,11 @@ async def register(
                 
             except Exception as e:
                 logger.error(f"Failed to create Hedera account: {e}")
-                # Fallback to test account for development
+                # Fallback: assign a placeholder account ID — user can link wallet later
                 import uuid
-                test_account_suffix = str(uuid.uuid4())[:8]
-                hedera_account_id = f"0.0.TEST_{test_account_suffix}"
+                hedera_account_id = f"0.0.PENDING_{str(uuid.uuid4())[:8].upper()}"
                 wallet_type = WalletTypeEnum.SYSTEM_GENERATED
-                logger.warning(f"Using test account as fallback: {hedera_account_id}")
+                logger.warning(f"Using pending account as fallback: {hedera_account_id}")
         
         # Create user in database
         new_user = User(
