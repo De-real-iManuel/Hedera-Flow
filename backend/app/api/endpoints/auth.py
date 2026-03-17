@@ -27,14 +27,18 @@ def set_auth_cookies(response: Response, access_token: str, refresh_token: str):
     # Determine if we're in production (use secure cookies only for HTTPS)
     is_production = getattr(settings, 'environment', 'development') == 'production'
     
+    # Cross-site (Vercel frontend → Railway backend) requires samesite="none" + secure=True
+    # Local dev uses samesite="lax" + secure=False
+    samesite = "none" if is_production else "lax"
+    
     # Set access token cookie (15 minutes)
     response.set_cookie(
         key="access_token",
         value=access_token,
         max_age=15 * 60,  # 15 minutes in seconds
         httponly=True,
-        secure=is_production,  # Only secure in production (HTTPS)
-        samesite="strict"
+        secure=is_production,  # samesite=none requires secure=True
+        samesite=samesite
     )
     
     # Set refresh token cookie (7 days)
@@ -43,8 +47,8 @@ def set_auth_cookies(response: Response, access_token: str, refresh_token: str):
         value=refresh_token,
         max_age=7 * 24 * 60 * 60,  # 7 days in seconds
         httponly=True,
-        secure=is_production,  # Only secure in production (HTTPS)
-        samesite="strict"
+        secure=is_production,
+        samesite=samesite
     )
 
 
@@ -499,13 +503,14 @@ async def logout(
     try:
         # Determine if we're in production
         is_production = getattr(settings, 'environment', 'development') == 'production'
+        samesite = "none" if is_production else "lax"
         
         # Clear access token cookie
         response.delete_cookie(
             key="access_token",
             httponly=True,
             secure=is_production,
-            samesite="strict"
+            samesite=samesite
         )
         
         # Clear refresh token cookie
@@ -513,7 +518,7 @@ async def logout(
             key="refresh_token",
             httponly=True,
             secure=is_production,
-            samesite="strict"
+            samesite=samesite
         )
         
         logger.info("User logged out successfully")
