@@ -56,29 +56,35 @@ class AWSKMSService:
         self.kms_client = None
         self.region = getattr(settings, 'aws_kms_region', 'us-east-1')
         self.master_key_id = getattr(settings, 'aws_kms_master_key_id', None)
+        self._available = False
         self._setup_client()
     
     def _setup_client(self):
         """Setup AWS KMS client with proper configuration"""
         try:
-            # Initialize KMS client
             self.kms_client = boto3.client(
                 'kms',
                 region_name=self.region
             )
             
-            # Test connectivity and permissions
             if self.master_key_id:
                 self._verify_key_access(self.master_key_id)
                 logger.info(f"✅ AWS KMS client initialized successfully")
                 logger.info(f"   Region: {self.region}")
                 logger.info(f"   Master Key: {self.master_key_id[:20]}...")
             else:
-                logger.warning("⚠️ AWS KMS master key ID not configured")
+                # Still mark available — key can be created/passed per-request
+                logger.warning("⚠️ AWS KMS master key ID not configured — per-request keys only")
+            
+            self._available = True
                 
         except Exception as e:
-            logger.error(f"❌ Failed to initialize AWS KMS client: {e}")
-            raise KMSServiceError(f"Failed to initialize KMS client: {str(e)}")
+            logger.warning(f"⚠️ AWS KMS not available: {e}")
+            self._available = False
+
+    @property
+    def is_available(self) -> bool:
+        return self._available
     
     def _verify_key_access(self, key_id: str) -> bool:
         """
@@ -227,18 +233,22 @@ class AWSKMSService:
         try:
             logger.info(f"🔐 Signing consumption data for meter {meter_id}")
             
-            # Create deterministic hash of consumption data
+            # Create deterministic JSON of consumption data
             data_json = json.dumps(consumption_data, sort_keys=True)
+            # Keep hash for return value / verification reference
             message_hash = hashlib.sha256(data_json.encode()).digest()
             
             logger.debug(f"   Data: {data_json}")
             logger.debug(f"   Hash: {message_hash.hex()}")
+            logger.debug(f"   Raw bytes length: {len(data_json.encode())}")
             
             # Sign with KMS (blind signing - private key never leaves HSM)
+            # Per Hedera docs: MessageType must be 'RAW' for Hedera transaction signing
+            # https://docs.hedera.com/hedera/tutorials/more-tutorials/HSM-signing/aws-kms
             response = self.kms_client.sign(
                 KeyId=key_id,
-                Message=message_hash,
-                MessageType='DIGEST',
+                Message=data_json.encode(),  # Send raw message, not digest
+                MessageType='RAW',
                 SigningAlgorithm='ECDSA_SHA_256'
             )
             
@@ -275,25 +285,26 @@ class AWSKMSService:
     def verify_signature(
         self,
         key_id: str,
-        message_hash: bytes,
+        message: bytes,
         signature: bytes
     ) -> bool:
         """
-        Verify signature using KMS public key
+        Verify signature using KMS public key.
         
         Args:
             key_id: KMS key ID
-            message_hash: Original message hash
+            message: Original raw message bytes (not digest)
             signature: Signature to verify
             
         Returns:
             True if signature is valid
         """
         try:
+            # MessageType='RAW' matches how we sign — KMS hashes internally
             response = self.kms_client.verify(
                 KeyId=key_id,
-                Message=message_hash,
-                MessageType='DIGEST',
+                Message=message,
+                MessageType='RAW',
                 Signature=signature,
                 SigningAlgorithm='ECDSA_SHA_256'
             )
@@ -412,21 +423,19 @@ _kms_service: Optional[AWSKMSService] = None
 
 
 def get_kms_service() -> AWSKMSService:
-    """
-    Get or create global KMS service instance
-    
-    Returns:
-        AWSKMSService instance
-    """
+    """Get or create global KMS service instance. Never raises — degrades gracefully."""
     global _kms_service
     
     if _kms_service is None:
         try:
             _kms_service = AWSKMSService()
         except Exception as e:
-            logger.error(f"Failed to initialize KMS service: {e}")
-            # For demo purposes, don't raise - allow graceful degradation
-            logger.warning("KMS service unavailable - using fallback mode")
-            raise
+            logger.warning(f"KMS service init failed, returning unavailable instance: {e}")
+            # Return a shell instance that reports unavailable
+            _kms_service = AWSKMSService.__new__(AWSKMSService)
+            _kms_service.kms_client = None
+            _kms_service.region = 'us-east-1'
+            _kms_service.master_key_id = None
+            _kms_service._available = False
     
     return _kms_service
