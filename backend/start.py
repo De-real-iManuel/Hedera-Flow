@@ -19,7 +19,47 @@ def run_migrations():
         engine = create_engine(settings.database_url)
         with engine.connect() as conn:
             sql_migrations = [
-                ("add_first_last_name", "ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name VARCHAR(100)"),
+                # Ensure enum types exist before creating/altering columns
+                ("create_country_code_enum", """
+                    DO $$ BEGIN
+                        CREATE TYPE country_code_enum AS ENUM ('ES','US','IN','BR','NG');
+                    EXCEPTION WHEN duplicate_object THEN NULL;
+                    END $$
+                """),
+                ("create_wallet_type_enum", """
+                    DO $$ BEGIN
+                        CREATE TYPE wallet_type_enum AS ENUM ('hashpack','system_generated');
+                    EXCEPTION WHEN duplicate_object THEN NULL;
+                    END $$
+                """),
+                # Ensure users table exists with all required columns
+                ("create_users_table", """
+                    CREATE TABLE IF NOT EXISTS users (
+                        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                        email VARCHAR(255) UNIQUE NOT NULL,
+                        password_hash VARCHAR(255),
+                        first_name VARCHAR(100),
+                        last_name VARCHAR(100),
+                        country_code country_code_enum NOT NULL DEFAULT 'NG',
+                        hedera_account_id VARCHAR(50) UNIQUE,
+                        wallet_type wallet_type_enum DEFAULT 'hashpack',
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        last_login TIMESTAMPTZ,
+                        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                        is_email_verified BOOLEAN NOT NULL DEFAULT FALSE,
+                        email_verification_token VARCHAR(255) UNIQUE,
+                        email_verification_expires TIMESTAMPTZ,
+                        subsidy_eligible BOOLEAN NOT NULL DEFAULT FALSE,
+                        subsidy_type VARCHAR(50),
+                        subsidy_verified_at TIMESTAMPTZ,
+                        subsidy_expires_at TIMESTAMPTZ,
+                        preferences JSONB DEFAULT '{}',
+                        security_settings JSONB DEFAULT '{}'
+                    )
+                """),
+                # Add any missing columns to existing tables (idempotent)
+                ("add_first_name", "ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name VARCHAR(100)"),
                 ("add_last_name", "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name VARCHAR(100)"),
                 ("add_is_email_verified", "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_email_verified BOOLEAN DEFAULT FALSE"),
                 ("add_email_verification_token", "ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verification_token VARCHAR(255)"),

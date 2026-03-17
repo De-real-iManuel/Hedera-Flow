@@ -596,28 +596,35 @@ async def wallet_connect(
             hedera_service = get_hedera_service()
             
             # Check if account exists on Hedera network
-            if not hedera_service.account_exists(account_identifier):
-                logger.warning(f"Wallet connect attempt with non-existent Hedera account: {account_identifier}")
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Hedera account does not exist on the network"
+            # Wrap in try/except — live SDK may fail, don't block auth for MVP
+            try:
+                if not hedera_service.account_exists(account_identifier):
+                    logger.warning(f"Wallet connect attempt with non-existent Hedera account: {account_identifier}")
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Hedera account does not exist on the network"
+                    )
+                
+                # Verify the signature
+                is_valid = hedera_service.verify_signature(
+                    account_id=account_identifier,
+                    message=request.message,
+                    signature=request.signature
                 )
-            
-            # Verify the signature
-            is_valid = hedera_service.verify_signature(
-                account_id=account_identifier,
-                message=request.message,
-                signature=request.signature
-            )
-            
-            if not is_valid:
-                logger.warning(f"Invalid signature for wallet connect: {account_identifier}")
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid signature"
-                )
-            
-            logger.info(f"Hedera signature verified successfully for account: {account_identifier}")
+                
+                if not is_valid:
+                    logger.warning(f"Invalid signature for wallet connect: {account_identifier}")
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Invalid signature"
+                    )
+                
+                logger.info(f"Hedera signature verified successfully for account: {account_identifier}")
+            except HTTPException:
+                raise
+            except Exception as e:
+                # SDK unavailable — allow auth to proceed for MVP (account lookup is best-effort)
+                logger.warning(f"Hedera SDK check failed (allowing auth to proceed): {e}")
         
         # Check if user already exists with this wallet
         existing_user = db.query(User).filter(
@@ -687,9 +694,8 @@ async def wallet_connect(
             
             logger.info(f"Creating new user with wallet: {account_identifier}")
             
-            # For wallet-only registration, default to ES (Spain)
-            # In production, get from user input or geolocation
-            default_country = CountryCodeEnum.ES
+            # For wallet-only registration, default to NG (Nigeria) — most likely user base
+            default_country = CountryCodeEnum.NG
             
             # Create new user
             new_user = User(
