@@ -200,8 +200,10 @@ export function PrepaidTokenPurchase({
         className: 'bg-blue-50 border-blue-500',
       });
 
-      // Get treasury account from environment or use default
-      const treasuryAccount = import.meta.env.VITE_HEDERA_TREASURY_ACCOUNT || '0.0.123456';
+      // Use treasury account from buy response, fallback to env var
+      const treasuryAccount = buyResponse.transaction?.to
+        || import.meta.env.VITE_HEDERA_TREASURY_ACCOUNT
+        || '0.0.7942971';
 
       const paymentResult = await sendHbarPayment({
         to: treasuryAccount,

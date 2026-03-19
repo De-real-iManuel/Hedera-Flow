@@ -8,7 +8,7 @@
     "VITE_API_BASE_URL": "https://hedera-flow-github-production.up.railway.app/api",
     "VITE_ENVIRONMENT": "production",
     "VITE_HEDERA_NETWORK": "testnet",
-    "VITE_HEDERA_TREASURY_ACCOUNT": "0.0.7942957",
+    "VITE_HEDERA_TREASURY_ACCOUNT": "0.0.7942971",
     "VITE_WALLETCONNECT_PROJECT_ID": "a410efc0d43c137138330074a67cdf07"
   }
 }
