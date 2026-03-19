@@ -565,8 +565,11 @@ class PrepaidTokenService:
                 amount_crypto = amount_fiat / exchange_rate
             
             # Prepare transaction details for payment
-            # TODO: Get actual utility provider Hedera account from database
-            utility_hedera_account = "0.0.UTILITY_PROVIDER"  # Placeholder
+            from config import settings
+            utility_hedera_account = (
+                settings.hedera_treasury_id
+                or "0.0.7942957"  # fallback from VITE_HEDERA_TREASURY_ACCOUNT
+            )
             
             transaction_details = {
                 'to': utility_hedera_account,

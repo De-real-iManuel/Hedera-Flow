@@ -131,9 +131,9 @@ async def seed_tariffs(db: Session = Depends(get_db)):
 
     # Remove any bad/stub rows that don't match canonical provider names
     canonical = {r[1] for r in ROWS}
-    db.execute(text(
-        "DELETE FROM tariffs WHERE utility_provider NOT IN :providers"
-    ), {"providers": tuple(canonical)})
+    placeholders = ", ".join(f":p{i}" for i in range(len(canonical)))
+    params_del = {f"p{i}": v for i, v in enumerate(canonical)}
+    db.execute(text(f"DELETE FROM tariffs WHERE utility_provider NOT IN ({placeholders})"), params_del)
     db.commit()
 
     inserted = []

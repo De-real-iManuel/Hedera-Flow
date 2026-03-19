@@ -73,8 +73,12 @@ def get_tariff(
                 return cached_tariff
             logger.info(f"Tariff cache MISS: {country_code}/{utility_provider}")
         
-        # Query database for active tariff
+        # Query database for active tariff (exact match first, then prefix fallback)
         tariff = _fetch_tariff_from_db(db, country_code, utility_provider)
+        
+        if not tariff:
+            # Fallback: try prefix match (handles "Company" suffix variants)
+            tariff = _fetch_tariff_from_db_fuzzy(db, country_code, utility_provider)
         
         if not tariff:
             raise TariffNotFoundError(
@@ -180,7 +184,48 @@ def _fetch_tariff_from_db(
     return None
 
 
-def invalidate_tariff_cache(
+def _fetch_tariff_from_db_fuzzy(
+    db: Session,
+    country_code: str,
+    utility_provider: str
+) -> Optional[Dict[str, Any]]:
+    """
+    Fuzzy fallback: match tariff where DB provider starts with the given name
+    or the given name starts with the DB provider. Handles 'Company' suffix variants.
+    """
+    today = date.today()
+
+    query = text("""
+        SELECT 
+            id, country_code, utility_provider, currency,
+            rate_structure, taxes_and_fees, subsidies, valid_from, valid_until
+        FROM tariffs
+        WHERE country_code = :country_code
+          AND is_active = true
+          AND valid_from <= :today
+          AND (valid_until IS NULL OR valid_until >= :today)
+          AND (
+              utility_provider ILIKE :prefix
+              OR :provider ILIKE utility_provider || '%'
+          )
+        ORDER BY valid_from DESC
+        LIMIT 1
+    """)
+
+    result = db.execute(query, {
+        'country_code': country_code,
+        'provider': utility_provider,
+        'prefix': utility_provider + '%',
+        'today': today
+    }).fetchone()
+
+    if result:
+        return {
+            'id': result[0], 'country_code': result[1], 'utility_provider': result[2],
+            'currency': result[3], 'rate_structure': result[4], 'taxes_and_fees': result[5],
+            'subsidies': result[6], 'valid_from': result[7], 'valid_until': result[8]
+        }
+    return None
     country_code: str,
     utility_provider: str
 ) -> bool:
