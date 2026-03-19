@@ -44,6 +44,15 @@ export const authApi = {
     return response.data;
   },
 
+  linkWallet: async (data: {
+    hedera_account_id: string;
+    signature: string;
+    message: string;
+  }): Promise<User> => {
+    const response = await apiClient.patch<User>('/auth/link-wallet', data);
+    return response.data;
+  },
+
   getCurrentUser: async (): Promise<User> => {
     const response = await apiClient.get<User>('/auth/me');
     return response.data;

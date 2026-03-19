@@ -247,11 +247,11 @@ const ProfilePage = () => {
           <DialogHeader>
             <DialogTitle>Connect Wallet</DialogTitle>
             <DialogDescription>
-              Connect your MetaMask wallet to enable HBAR payments for prepaid tokens
+              Link your wallet to this account to enable HBAR payments
             </DialogDescription>
           </DialogHeader>
           <div className="py-4">
-            <WalletConnect />
+            <WalletConnect mode="link" onLinked={() => setShowWalletDialog(false)} />
           </div>
         </DialogContent>
       </Dialog>

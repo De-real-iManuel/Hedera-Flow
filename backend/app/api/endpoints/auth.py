@@ -939,3 +939,57 @@ async def complete_profile(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to update profile: {str(e)}"
         )
+
+
+@router.patch("/link-wallet", response_model=UserResponse)
+async def link_wallet(
+    request: WalletConnectRequest,
+    current_user: User = Depends(get_current_user_dependency),
+    db: Session = Depends(get_db)
+):
+    """
+    Link a wallet to an existing authenticated user account.
+    Does NOT create a new account — binds the wallet to the logged-in user.
+    """
+    try:
+        account_identifier = request.hedera_account_id
+
+        # Check if this wallet is already linked to a DIFFERENT account
+        existing = db.query(User).filter(
+            User.hedera_account_id == account_identifier,
+            User.id != current_user.id
+        ).first()
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This wallet is already linked to another account"
+            )
+
+        # Update the current user's hedera_account_id and wallet_type
+        is_evm = account_identifier.startswith("0x")
+        current_user.hedera_account_id = account_identifier
+        current_user.wallet_type = WalletTypeEnum.HASHPACK
+
+        db.commit()
+        db.refresh(current_user)
+
+        logger.info(f"Wallet {account_identifier} linked to user {current_user.email}")
+
+        access_token = create_access_token(
+            user_id=str(current_user.id),
+            email=current_user.email,
+            country_code=current_user.country_code.value,
+            hedera_account_id=current_user.hedera_account_id
+        )
+
+        return _build_user_response(current_user, access_token)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to link wallet: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to link wallet: {str(e)}"
+        )

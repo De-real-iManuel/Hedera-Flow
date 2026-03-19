@@ -18,7 +18,7 @@ import { Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
 import { utilityProvidersApi } from '@/lib/api';
 
 interface MeterRegistrationFormProps {
-  onSuccess?: () => void;
+  onSuccess?: (meterId?: string) => void;
   onCancel?: () => void;
 }
 
@@ -110,12 +110,12 @@ export function MeterRegistrationForm({ onSuccess, onCancel }: MeterRegistration
     console.log('Submitting meter data:', meterData);
     
     createMeter(meterData, {
-      onSuccess: () => {
+      onSuccess: (newMeter) => {
         setShowSuccess(true);
         setTimeout(() => {
           setShowSuccess(false);
           if (onSuccess) {
-            onSuccess();
+            onSuccess(newMeter?.id);
           }
         }, 2000);
       },

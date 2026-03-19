@@ -25,9 +25,13 @@ const RegisterMeterPage = () => {
         
         {/* Form */}
         <MeterRegistrationForm
-          onSuccess={() => {
-            // Navigate to home or meters list after successful registration
-            navigate('/');
+          onSuccess={(meterId?: string) => {
+            // Go to the specific meter page, or meters list as fallback
+            if (meterId) {
+              navigate(`/meters/${meterId}`);
+            } else {
+              navigate('/meters');
+            }
           }}
           onCancel={() => navigate(-1)}
         />
