@@ -321,34 +321,22 @@ async def create_verification(
         if hcs_topic_id and hcs_topic_id != "0.0.xxxxx":
             try:
                 logger.info(f"Logging verification to HCS topic {hcs_topic_id}")
-                
-                hcs_message = {
-                    'type': 'VERIFICATION',
-                    'timestamp': int(datetime.now(timezone.utc).timestamp()),
-                    'user_id': str(current_user.id)[:8] + '...',  # Anonymized
-                    'meter_id': meter_data['meter_id'],
-                    'reading': float(reading_value),
-                    'utility_reading': None,  # Not available in MVP
-                    'confidence': float(confidence),
-                    'fraud_score': float(fraud_score),
-                    'status': verification_status.value,
-                    'image_hash': image_ipfs_hash
-                }
-                
                 hedera_service = get_hedera_service()
-                hcs_result = await hedera_service.submit_hcs_message(
+                # Use log_payment_to_hcs with verification data as a proxy
+                hcs_result = hedera_service.log_payment_to_hcs(
                     topic_id=hcs_topic_id,
-                    message=hcs_message
+                    bill_id=str(verification_id),
+                    amount_fiat=float(reading_value),
+                    currency_fiat="READING",
+                    amount_hbar=float(fraud_score),
+                    exchange_rate=float(confidence),
+                    tx_id=f"VERIFY-{str(verification_id)[:8]}"
                 )
-                
-                hcs_sequence_number = hcs_result['sequence_number']
+                hcs_sequence_number = hcs_result.get('sequence_number')
                 hcs_timestamp = datetime.now(timezone.utc)
-                
                 logger.info(f"HCS logging successful: sequence={hcs_sequence_number}")
-                
             except Exception as e:
                 logger.error(f"HCS logging failed (non-critical): {e}")
-                # Don't fail the verification if HCS logging fails
         else:
             logger.warning(f"HCS topic not configured for country {country_code}, skipping blockchain logging")
         
