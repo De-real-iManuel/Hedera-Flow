@@ -128,6 +128,14 @@ def run_schema_migrations():
             conn.execute(text(schema_sql))
             conn.execute(text(seed_sql))
             conn.execute(text(tariff_seed_sql))
+            # Fix any meters that stored a non-canonical utility_provider name
+            conn.execute(text("""
+                UPDATE meters m
+                SET utility_provider = up.provider_name
+                FROM utility_providers up
+                WHERE m.utility_provider_id = up.id
+                  AND m.utility_provider IS DISTINCT FROM up.provider_name
+            """))
             conn.commit()
         print("[OK] Schema migrations and seed data applied")
     except Exception as e:

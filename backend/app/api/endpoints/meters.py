@@ -154,7 +154,7 @@ async def create_meter(
             meter_id=normalized_meter_id,  # Use normalized meter ID
             utility_provider_id=utility_provider.id,
             state_province=request.state_province,
-            utility_provider=request.utility_provider,  # Denormalized for quick access
+            utility_provider=utility_provider.provider_name,  # Use canonical name for tariff lookup
             meter_type=request.meter_type,
             band_classification=request.band_classification,
             address=request.address,

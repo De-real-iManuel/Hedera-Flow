@@ -107,9 +107,9 @@ class ExchangeRateService:
                 except Exception as e:
                     logger.warning(f"Cache operation failed (non-critical): {e}")
             
-            # Store in database
+            # Store in database — source determined inside fetch_from_api
             try:
-                self.store_in_db(currency, price, source='mock')
+                self.store_in_db(currency, price, source='coingecko')
             except Exception as e:
                 logger.warning(f"DB storage failed (non-critical): {e}")
             
