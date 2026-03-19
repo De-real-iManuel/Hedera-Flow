@@ -335,7 +335,8 @@ async def create_verification(
                     'image_hash': image_ipfs_hash
                 }
                 
-                hcs_result = await hedera_client.submit_hcs_message(
+                hedera_service = get_hedera_service()
+                hcs_result = await hedera_service.submit_hcs_message(
                     topic_id=hcs_topic_id,
                     message=hcs_message
                 )
