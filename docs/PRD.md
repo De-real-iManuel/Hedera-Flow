@@ -175,7 +175,8 @@ This system cannot work on Web2 alone because utilities control the database —
 
 | Member | Role | Key Responsibilities |
 |--------|------|---------------------|
-| Emmanuel Okey | Full-stack Dev | Product, backend, frontend, infra |
+| EMMANUEL NWAJARI | Full-stack Dev | Product, backend, frontend, infra |
+|KIRO.DEV| Developer Assistant| Refine code, flow best practices
 
 ### Design Decisions
 
@@ -189,7 +190,7 @@ This system cannot work on Web2 alone because utilities control the database —
 
 - **2026**: 500-user pilot (Port Harcourt)
 - **Late 2026**: Omnichain payments via ZetaChain
-- **2027**: Hardware adapter (Flow-Stick)
+- **2027**: Hardware adapter 
 
 ---
 
@@ -213,6 +214,23 @@ This system cannot work on Web2 alone because utilities control the database —
 
 1. Early validation shows strong interest in transparent billing solutions
 2. Iterate based on utility partner feedback, re-test with expanded user base
+
+### Real-World Validation — PHED Response
+
+We reached out directly to **Port Harcourt Electricity Distribution Company (PHED)** — one of Nigeria's 11 DISCOs — to validate the concept before the hackathon deadline.
+
+Their response:
+
+> *"Hello Emmanuel, thank you for reaching out and sharing your innovative idea. We commend initiatives that explore how technology can improve transparency, customer experience, and trust in the electricity value chain. Kindly email info@phed.com.ng for proper review and consideration by the relevant team. We appreciate your interest."*
+>
+> — **PHED Official Response**, March 2026
+
+![PHED Response](Response-phed.png)
+
+This confirms:
+- A real Nigerian DISCO has acknowledged the problem space
+- The solution is compelling enough to be escalated to their technical review team
+- Port Harcourt is a viable pilot city for the 2026 500-user deployment target
 
 ---
 
@@ -259,6 +277,7 @@ This system cannot work on Web2 alone because utilities control the database —
 > Good ideas that are not in scope for the hackathon
 
 - Mobile wallet integration (critical next step)
+- Fiat Payment.
 - Smart meter hardware (Flow-Stick adapter)
 - Fraud detection AI (ML model trained on historical readings)
 - Tokenized energy marketplace
