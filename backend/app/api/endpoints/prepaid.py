@@ -14,6 +14,7 @@ from app.core.database import get_db
 from app.core.dependencies import get_current_user
 from app.models.user import User
 from app.services.prepaid_token_service import PrepaidTokenService, PrepaidTokenError
+from app.services.tariff_service import TariffNotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -229,6 +230,12 @@ async def preview_prepaid_token(
         
     except HTTPException:
         raise
+    except TariffNotFoundError as e:
+        logger.warning(f"Tariff not found for preview: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No tariff configured for your utility provider. Please contact support."
+        )
     except Exception as e:
         logger.error(f"Error calculating preview: {e}")
         raise HTTPException(

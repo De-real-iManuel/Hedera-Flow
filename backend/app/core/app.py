@@ -83,10 +83,51 @@ def run_schema_migrations():
     ON CONFLICT DO NOTHING;
     """
 
+    # Seed tariffs for all providers — band-based for NG, flat for others
+    tariff_seed_sql = """
+    INSERT INTO tariffs (country_code, utility_provider, currency, rate_structure, taxes_and_fees, valid_from, is_active)
+    VALUES
+      -- Nigeria DISCOs (NGN, band-based: Band A=225, B=63, C=50, D=43, E=40 NGN/kWh)
+      ('NG','Eko Electricity Distribution Company',   'NGN','{"type":"band_based","bands":[{"band":"A","price":225},{"band":"B","price":63},{"band":"C","price":50},{"band":"D","price":43},{"band":"E","price":40}]}','{"vat":0.075}','2024-01-01',true),
+      ('NG','Ikeja Electric',                         'NGN','{"type":"band_based","bands":[{"band":"A","price":225},{"band":"B","price":63},{"band":"C","price":50},{"band":"D","price":43},{"band":"E","price":40}]}','{"vat":0.075}','2024-01-01',true),
+      ('NG','Abuja Electricity Distribution Company', 'NGN','{"type":"band_based","bands":[{"band":"A","price":225},{"band":"B","price":63},{"band":"C","price":50},{"band":"D","price":43},{"band":"E","price":40}]}','{"vat":0.075}','2024-01-01',true),
+      ('NG','Enugu Electricity Distribution Company', 'NGN','{"type":"band_based","bands":[{"band":"A","price":225},{"band":"B","price":63},{"band":"C","price":50},{"band":"D","price":43},{"band":"E","price":40}]}','{"vat":0.075}','2024-01-01',true),
+      ('NG','Port Harcourt Electricity Distribution', 'NGN','{"type":"band_based","bands":[{"band":"A","price":225},{"band":"B","price":63},{"band":"C","price":50},{"band":"D","price":43},{"band":"E","price":40}]}','{"vat":0.075}','2024-01-01',true),
+      ('NG','Ibadan Electricity Distribution Company','NGN','{"type":"band_based","bands":[{"band":"A","price":225},{"band":"B","price":63},{"band":"C","price":50},{"band":"D","price":43},{"band":"E","price":40}]}','{"vat":0.075}','2024-01-01',true),
+      ('NG','Kano Electricity Distribution Company',  'NGN','{"type":"band_based","bands":[{"band":"A","price":225},{"band":"B","price":63},{"band":"C","price":50},{"band":"D","price":43},{"band":"E","price":40}]}','{"vat":0.075}','2024-01-01',true),
+      ('NG','Kaduna Electricity Distribution Company','NGN','{"type":"band_based","bands":[{"band":"A","price":225},{"band":"B","price":63},{"band":"C","price":50},{"band":"D","price":43},{"band":"E","price":40}]}','{"vat":0.075}','2024-01-01',true),
+      ('NG','Jos Electricity Distribution Company',   'NGN','{"type":"band_based","bands":[{"band":"A","price":225},{"band":"B","price":63},{"band":"C","price":50},{"band":"D","price":43},{"band":"E","price":40}]}','{"vat":0.075}','2024-01-01',true),
+      ('NG','Benin Electricity Distribution Company', 'NGN','{"type":"band_based","bands":[{"band":"A","price":225},{"band":"B","price":63},{"band":"C","price":50},{"band":"D","price":43},{"band":"E","price":40}]}','{"vat":0.075}','2024-01-01',true),
+      ('NG','Yola Electricity Distribution Company',  'NGN','{"type":"band_based","bands":[{"band":"A","price":225},{"band":"B","price":63},{"band":"C","price":50},{"band":"D","price":43},{"band":"E","price":40}]}','{"vat":0.075}','2024-01-01',true),
+      -- Spain (EUR, flat ~0.18/kWh)
+      ('ES','Iberdrola','EUR','{"type":"flat","rate":0.18}','{"vat":0.21}','2024-01-01',true),
+      ('ES','Endesa',   'EUR','{"type":"flat","rate":0.18}','{"vat":0.21}','2024-01-01',true),
+      ('ES','Naturgy',  'EUR','{"type":"flat","rate":0.18}','{"vat":0.21}','2024-01-01',true),
+      -- USA (USD, tiered)
+      ('US','Pacific Gas & Electric','USD','{"type":"tiered","tiers":[{"limit":500,"price":0.12},{"limit":null,"price":0.18}]}','{"tax":0.08}','2024-01-01',true),
+      ('US','Con Edison',            'USD','{"type":"tiered","tiers":[{"limit":500,"price":0.12},{"limit":null,"price":0.18}]}','{"tax":0.08}','2024-01-01',true),
+      ('US','ComEd',                 'USD','{"type":"tiered","tiers":[{"limit":500,"price":0.12},{"limit":null,"price":0.18}]}','{"tax":0.08}','2024-01-01',true),
+      ('US','Florida Power & Light', 'USD','{"type":"tiered","tiers":[{"limit":500,"price":0.12},{"limit":null,"price":0.18}]}','{"tax":0.08}','2024-01-01',true),
+      ('US','Texas Electric',        'USD','{"type":"tiered","tiers":[{"limit":500,"price":0.12},{"limit":null,"price":0.18}]}','{"tax":0.08}','2024-01-01',true),
+      -- India (INR, tiered)
+      ('IN','Tata Power',   'INR','{"type":"tiered","tiers":[{"limit":100,"price":3.5},{"limit":300,"price":5.5},{"limit":null,"price":7.5}]}','{"tax":0.05}','2024-01-01',true),
+      ('IN','BSES Rajdhani','INR','{"type":"tiered","tiers":[{"limit":100,"price":3.5},{"limit":300,"price":5.5},{"limit":null,"price":7.5}]}','{"tax":0.05}','2024-01-01',true),
+      ('IN','BSES Yamuna',  'INR','{"type":"tiered","tiers":[{"limit":100,"price":3.5},{"limit":300,"price":5.5},{"limit":null,"price":7.5}]}','{"tax":0.05}','2024-01-01',true),
+      ('IN','BESCOM',       'INR','{"type":"tiered","tiers":[{"limit":100,"price":3.5},{"limit":300,"price":5.5},{"limit":null,"price":7.5}]}','{"tax":0.05}','2024-01-01',true),
+      ('IN','TNEB',         'INR','{"type":"tiered","tiers":[{"limit":100,"price":3.5},{"limit":300,"price":5.5},{"limit":null,"price":7.5}]}','{"tax":0.05}','2024-01-01',true),
+      -- Brazil (BRL, tiered)
+      ('BR','CEMIG',        'BRL','{"type":"tiered","tiers":[{"limit":200,"price":0.65},{"limit":null,"price":0.85}]}','{"icms":0.20}','2024-01-01',true),
+      ('BR','ENEL São Paulo','BRL','{"type":"tiered","tiers":[{"limit":200,"price":0.65},{"limit":null,"price":0.85}]}','{"icms":0.20}','2024-01-01',true),
+      ('BR','COPEL',        'BRL','{"type":"tiered","tiers":[{"limit":200,"price":0.65},{"limit":null,"price":0.85}]}','{"icms":0.20}','2024-01-01',true),
+      ('BR','CELPE',        'BRL','{"type":"tiered","tiers":[{"limit":200,"price":0.65},{"limit":null,"price":0.85}]}','{"icms":0.20}','2024-01-01',true)
+    ON CONFLICT DO NOTHING;
+    """
+
     try:
         with engine.connect() as conn:
             conn.execute(text(schema_sql))
             conn.execute(text(seed_sql))
+            conn.execute(text(tariff_seed_sql))
             conn.commit()
         print("[OK] Schema migrations and seed data applied")
     except Exception as e:
