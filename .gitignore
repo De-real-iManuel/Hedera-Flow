@@ -92,9 +92,8 @@ backend/debug_*.py
 backend/verify_*.py
 backend/test_*.py
 
-# Docs folder
-docs/
-.md
+# Docs folder (tracked — contains architecture and PRD)
+# docs/
 
 # Kiro specs and tasks
 .kiro/specs/
