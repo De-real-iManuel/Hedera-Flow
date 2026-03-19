@@ -113,26 +113,36 @@ async def seed_tariffs(db: Session = Depends(get_db)):
         ('BR','CELPE',         'BRL','{"type":"tiered","tiers":[{"limit":200,"price":0.65},{"limit":null,"price":0.85}]}','{"icms":0.20}'),
     ]
 
+    import json as _json
+
+    # Remove any bad/stub rows that don't match canonical provider names
+    canonical = {r[1] for r in ROWS}
+    db.execute(text(
+        "DELETE FROM tariffs WHERE utility_provider NOT IN :providers"
+    ), {"providers": tuple(canonical)})
+    db.commit()
+
     inserted = []
     errors = []
     for (cc, provider, currency, rate_json, taxes_json) in ROWS:
         try:
-            result = db.execute(text("""
-                INSERT INTO tariffs (country_code, utility_provider, currency, rate_structure, taxes_and_fees, valid_from, is_active)
-                SELECT :cc, :provider, :currency, :rate::jsonb, :taxes::jsonb, '2024-01-01', true
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM tariffs WHERE country_code=:cc AND utility_provider=:provider AND is_active=true
-                )
-            """), {'cc': cc, 'provider': provider, 'currency': currency, 'rate': rate_json, 'taxes': taxes_json})
-            if result.rowcount > 0:
-                inserted.append(f"{cc}/{provider}")
+            # Check existence first
+            exists = db.execute(text(
+                "SELECT 1 FROM tariffs WHERE country_code=:cc AND utility_provider=:p AND is_active=true"
+            ), {"cc": cc, "p": provider}).fetchone()
+            if exists:
+                continue
+            # Use cast() in SQL to avoid psycopg2 named-param + :: conflict
+            db.execute(text(
+                "INSERT INTO tariffs (country_code, utility_provider, currency, rate_structure, taxes_and_fees, valid_from, is_active) "
+                "VALUES (:cc, :provider, :currency, cast(:rate AS jsonb), cast(:taxes AS jsonb), '2024-01-01', true)"
+            ), {"cc": cc, "provider": provider, "currency": currency, "rate": rate_json, "taxes": taxes_json})
+            db.commit()
+            inserted.append(f"{cc}/{provider}")
         except Exception as e:
-            errors.append(f"{cc}/{provider}: {str(e)}")
             db.rollback()
+            errors.append(f"{cc}/{provider}: {str(e)}")
 
-    db.commit()
-
-    # Return current state
     all_tariffs = db.execute(text(
         "SELECT country_code, utility_provider FROM tariffs WHERE is_active=true ORDER BY country_code, utility_provider"
     )).fetchall()

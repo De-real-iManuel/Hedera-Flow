@@ -143,28 +143,21 @@ def run_schema_migrations():
         ('BR','CELPE',         'BRL','{"type":"tiered","tiers":[{"limit":200,"price":0.65},{"limit":null,"price":0.85}]}','{"icms":0.20}'),
     ]
 
-    # Step 4: seed tariffs using WHERE NOT EXISTS (no unique constraint required)
+    # Step 4: seed tariffs using cast() for jsonb (no :: operator, no unique constraint needed)
     try:
         inserted = 0
         with engine.connect() as conn:
             for (cc, provider, currency, rate_json, taxes_json) in TARIFF_ROWS:
-                result = conn.execute(text("""
-                    INSERT INTO tariffs (country_code, utility_provider, currency, rate_structure, taxes_and_fees, valid_from, is_active)
-                    SELECT :cc, :provider, :currency, :rate_structure::jsonb, :taxes_and_fees::jsonb, '2024-01-01', true
-                    WHERE NOT EXISTS (
-                        SELECT 1 FROM tariffs
-                        WHERE country_code = :cc
-                          AND utility_provider = :provider
-                          AND is_active = true
-                    )
-                """), {
-                    'cc': cc,
-                    'provider': provider,
-                    'currency': currency,
-                    'rate_structure': rate_json,
-                    'taxes_and_fees': taxes_json,
-                })
-                inserted += result.rowcount
+                exists = conn.execute(text(
+                    "SELECT 1 FROM tariffs WHERE country_code=:cc AND utility_provider=:p AND is_active=true"
+                ), {"cc": cc, "p": provider}).fetchone()
+                if exists:
+                    continue
+                conn.execute(text(
+                    "INSERT INTO tariffs (country_code, utility_provider, currency, rate_structure, taxes_and_fees, valid_from, is_active) "
+                    "VALUES (:cc, :provider, :currency, cast(:rate AS jsonb), cast(:taxes AS jsonb), '2024-01-01', true)"
+                ), {"cc": cc, "provider": provider, "currency": currency, "rate": rate_json, "taxes": taxes_json})
+                inserted += 1
             conn.commit()
         print(f"[OK] Tariffs seeded ({inserted} new rows)")
     except Exception as e:
