@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Zap, Shield, Camera as CameraIcon, AlertCircle, Wallet } from "lucide-react";
+import { Zap, Shield, Camera as CameraIcon, AlertCircle, Wallet, Pencil } from "lucide-react";
 import AppHeader from "@/components/AppHeader";
 import { Camera } from "@/components/Camera";
 import { VerificationResult, VerificationResultData } from "@/components/VerificationResult";
@@ -12,10 +12,12 @@ import { useAuth } from "@/hooks/useAuth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { useHashPack, PaymentTransaction } from "@/lib/hashpack";
 
 const ScanPage = () => {
-  const [phase, setPhase] = useState<"ready" | "scanning" | "result" | "receipt">("ready");
+  const [phase, setPhase] = useState<"ready" | "scanning" | "manual" | "result" | "receipt">("ready");
   const [capturedImage, setCapturedImage] = useState<File | null>(null);
   const [verificationResult, setVerificationResult] = useState<VerificationResultData | null>(null);
   const [paymentReceipt, setPaymentReceipt] = useState<PaymentReceiptData | null>(null);
@@ -24,6 +26,8 @@ const ScanPage = () => {
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [connectedAccount, setConnectedAccount] = useState<string | null>(null);
   const [showWalletConnect, setShowWalletConnect] = useState(false);
+  const [manualReading, setManualReading] = useState<string>("");
+  const [isSubmittingManual, setIsSubmittingManual] = useState(false);
   const { toast } = useToast();
   const { user } = useAuth();
   const { meters, isLoading: metersLoading } = useMeters();
@@ -57,41 +61,17 @@ const ScanPage = () => {
 
     try {
       const result = await verificationApi.scanMeter(selectedMeterId, file);
+      processVerificationResult(result);
+    } catch (error: any) {
+      const status = error?.response?.status;
+      const detail = error?.response?.data?.detail;
 
-      const toNumber = (value: any): number => {
-        if (typeof value === "number") return value;
-        if (typeof value === "string") return parseFloat(value);
-        return 0;
-      };
+      if (status === 422 && detail === "ocr_unavailable") {
+        // OCR not available — ask user to enter reading manually
+        setPhase("manual");
+        return;
+      }
 
-      const verificationData: VerificationResultData = {
-        reading: toNumber(result.reading_value),
-        previousReading: result.previous_reading ? toNumber(result.previous_reading) : undefined,
-        consumption: result.consumption_kwh ? toNumber(result.consumption_kwh) : undefined,
-        confidence: toNumber(result.confidence),
-        status: result.status,
-        fraudScore: toNumber(result.fraud_score),
-        fraudFlags: result.fraud_flags ? Object.keys(result.fraud_flags) : undefined,
-        bill: result.bill
-          ? {
-              baseCharge: 0,
-              taxes: 0,
-              serviceCharge: 0,
-              total: toNumber(result.bill.total_fiat),
-              currency: result.bill.currency,
-              breakdown: [],
-            }
-          : undefined,
-        hcsSequenceNumber: result.hcs_sequence_number,
-        hcsTopicId: result.hcs_topic_id,
-        utilityReading: result.utility_reading ? toNumber(result.utility_reading) : undefined,
-      };
-
-      if (result.bill) setBillId(result.bill.id);
-
-      setVerificationResult(verificationData);
-      setPhase("result");
-    } catch (error) {
       console.error("Verification failed:", error);
       toast({
         title: "Verification Failed",
@@ -102,11 +82,69 @@ const ScanPage = () => {
     }
   };
 
+  const handleManualSubmit = async () => {
+    const reading = parseFloat(manualReading);
+    if (!capturedImage || isNaN(reading) || reading <= 0) {
+      toast({ title: "Invalid Reading", description: "Please enter a valid meter reading.", variant: "destructive" });
+      return;
+    }
+
+    setIsSubmittingManual(true);
+    setPhase("scanning");
+
+    try {
+      const result = await verificationApi.scanMeter(selectedMeterId, capturedImage, reading, 0.75);
+      processVerificationResult(result);
+    } catch (error) {
+      console.error("Manual verification failed:", error);
+      toast({ title: "Verification Failed", description: "Could not submit reading. Please try again.", variant: "destructive" });
+      setPhase("manual");
+    } finally {
+      setIsSubmittingManual(false);
+    }
+  };
+
+  const processVerificationResult = (result: any) => {
+    const toNumber = (value: any): number => {
+      if (typeof value === "number") return value;
+      if (typeof value === "string") return parseFloat(value);
+      return 0;
+    };
+
+    const verificationData: VerificationResultData = {
+      reading: toNumber(result.reading_value),
+      previousReading: result.previous_reading ? toNumber(result.previous_reading) : undefined,
+      consumption: result.consumption_kwh ? toNumber(result.consumption_kwh) : undefined,
+      confidence: toNumber(result.confidence),
+      status: result.status,
+      fraudScore: toNumber(result.fraud_score),
+      fraudFlags: result.fraud_flags ? Object.keys(result.fraud_flags) : undefined,
+      bill: result.bill
+        ? {
+            baseCharge: 0,
+            taxes: 0,
+            serviceCharge: 0,
+            total: toNumber(result.bill.total_fiat),
+            currency: result.bill.currency,
+            breakdown: [],
+          }
+        : undefined,
+      hcsSequenceNumber: result.hcs_sequence_number,
+      hcsTopicId: result.hcs_topic_id,
+      utilityReading: result.utility_reading ? toNumber(result.utility_reading) : undefined,
+    };
+
+    if (result.bill) setBillId(result.bill.id);
+    setVerificationResult(verificationData);
+    setPhase("result");
+  };
+
   const handleRetry = () => {
     setCapturedImage(null);
     setVerificationResult(null);
     setPaymentReceipt(null);
     setBillId(null);
+    setManualReading("");
     setPhase("ready");
   };
 
@@ -433,6 +471,55 @@ const ScanPage = () => {
               </div>
 
               <Camera onCapture={handleCapture} />
+            </motion.div>
+          )}
+
+          {/* Manual Reading Fallback */}
+          {phase === "manual" && (
+            <motion.div
+              key="manual"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              className="space-y-4"
+            >
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Pencil className="w-5 h-5 text-accent" />
+                    Enter Meter Reading
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <p className="text-sm text-muted-foreground">
+                    Automatic reading couldn't be extracted from the image. Please enter the meter reading manually.
+                  </p>
+                  <div className="space-y-2">
+                    <Label htmlFor="manual-reading">Meter Reading (kWh)</Label>
+                    <Input
+                      id="manual-reading"
+                      type="number"
+                      placeholder="e.g. 12345"
+                      value={manualReading}
+                      onChange={(e) => setManualReading(e.target.value)}
+                      min="0"
+                      step="0.1"
+                    />
+                  </div>
+                  <div className="flex gap-3">
+                    <Button variant="outline" onClick={handleRetry} className="flex-1">
+                      Retake Photo
+                    </Button>
+                    <Button
+                      onClick={handleManualSubmit}
+                      disabled={!manualReading || isSubmittingManual}
+                      className="flex-1"
+                    >
+                      {isSubmittingManual ? "Submitting..." : "Submit Reading"}
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
             </motion.div>
           )}
 

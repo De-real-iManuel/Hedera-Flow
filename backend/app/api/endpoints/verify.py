@@ -150,32 +150,53 @@ async def create_verification(
             confidence = Decimal(str(ocr_confidence))
             raw_ocr_text = f"Client-side OCR: {ocr_reading}"
             ocr_engine = OCREngine.TESSERACT
+
+        elif ocr_reading is not None and ocr_reading > 0:
+            # Manual reading provided (client-side OCR failed or user entered manually)
+            logger.info(f"Using manual/fallback reading: {ocr_reading}")
+            reading_value = Decimal(str(ocr_reading))
+            confidence = Decimal(str(ocr_confidence)) if ocr_confidence is not None else Decimal('0.75')
+            raw_ocr_text = f"Manual entry: {ocr_reading}"
+            ocr_engine = OCREngine.TESSERACT
+
         else:
             # Run server-side OCR (Google Vision API)
             logger.info("Running server-side OCR (Google Vision API)")
             ocr_service = get_ocr_service()
-            
+
+            if not ocr_service.is_available:
+                logger.warning("Vision API not available — requesting manual reading from client")
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="ocr_unavailable"
+                )
+
             try:
                 ocr_result = ocr_service.extract_reading(image_bytes)
-                
+
                 if ocr_result.get('error'):
+                    error_type = ocr_result.get('error_type', 'unknown')
+                    logger.warning(f"OCR returned error ({error_type}): {ocr_result['error']}")
+                    # Signal client to prompt for manual entry
                     raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"OCR failed: {ocr_result['error']}"
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail="ocr_unavailable"
                     )
-                
+
                 reading_value = Decimal(str(ocr_result['reading']))
                 confidence = Decimal(str(ocr_result['confidence']))
                 raw_ocr_text = ocr_result.get('raw_text', '')
                 ocr_engine = OCREngine.GOOGLE_VISION
-                
+
                 logger.info(f"Server-side OCR result: {reading_value} (confidence: {confidence})")
-                
+
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(f"OCR processing failed: {e}")
                 raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=f"OCR processing failed: {str(e)}"
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="ocr_unavailable"
                 )
         
         # Step 4: Get previous reading for consumption calculation
