@@ -9,6 +9,7 @@ from sqlalchemy.pool import QueuePool
 from typing import Generator
 import logging
 
+import os
 from config import settings
 
 # Configure logging
@@ -18,62 +19,39 @@ logger = logging.getLogger(__name__)
 Base = declarative_base()
 
 
+def get_database_url() -> str:
+    """Get database URL, checking all possible sources."""
+    # Priority: Railway DATABASE_URL env var > settings.database_url
+    url = os.getenv('DATABASE_URL') or settings.database_url
+    if not url:
+        raise ValueError("DATABASE_URL is not configured. Set it in Railway environment variables.")
+    # Railway sometimes provides postgres:// but SQLAlchemy needs postgresql://
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql://", 1)
+    return url
+
+
 def create_database_engine():
-    """
-    Create SQLAlchemy engine with connection pooling
-    
-    Connection Pool Configuration:
-    - pool_size: Number of connections to maintain in the pool (default: 20)
-    - max_overflow: Additional connections that can be created beyond pool_size (default: 10)
-    - pool_timeout: Seconds to wait before giving up on getting a connection (default: 30)
-    - pool_recycle: Recycle connections after this many seconds (prevents stale connections)
-    - pool_pre_ping: Test connections before using them (ensures connection is alive)
-    
-    Returns:
-        SQLAlchemy Engine instance
-    """
-    # Get pool settings from environment or use defaults
-    pool_size = int(getattr(settings, 'db_pool_size', 20))
+    """Create SQLAlchemy engine with connection pooling."""
+    db_url = get_database_url()
+
+    pool_size = int(getattr(settings, 'db_pool_size', 5))
     max_overflow = int(getattr(settings, 'db_max_overflow', 10))
     pool_timeout = int(getattr(settings, 'db_pool_timeout', 30))
-    
-    # Create engine with connection pooling
+
     engine = create_engine(
-        settings.database_url,
+        db_url,
         poolclass=QueuePool,
         pool_size=pool_size,
         max_overflow=max_overflow,
         pool_timeout=pool_timeout,
-        pool_recycle=3600,  # Recycle connections after 1 hour
-        pool_pre_ping=True,  # Test connections before using
-        echo=settings.debug,  # Log SQL queries in debug mode
-        future=True,  # Use SQLAlchemy 2.0 style
+        pool_recycle=3600,
+        pool_pre_ping=True,
+        echo=settings.debug,
+        future=True,
     )
-    
-    # Log pool configuration
-    logger.info(f"Database engine created with connection pool:")
-    logger.info(f"  - Pool size: {pool_size}")
-    logger.info(f"  - Max overflow: {max_overflow}")
-    logger.info(f"  - Pool timeout: {pool_timeout}s")
-    logger.info(f"  - Pool recycle: 3600s")
-    logger.info(f"  - Pre-ping enabled: True")
-    
-    # Add event listeners for connection lifecycle
-    @event.listens_for(engine, "connect")
-    def receive_connect(dbapi_conn, connection_record):
-        """Event listener for new connections"""
-        logger.debug("New database connection established")
-    
-    @event.listens_for(engine, "checkout")
-    def receive_checkout(dbapi_conn, connection_record, connection_proxy):
-        """Event listener for connection checkout from pool"""
-        logger.debug("Connection checked out from pool")
-    
-    @event.listens_for(engine, "checkin")
-    def receive_checkin(dbapi_conn, connection_record):
-        """Event listener for connection return to pool"""
-        logger.debug("Connection returned to pool")
-    
+
+    logger.info(f"Database engine created (pool_size={pool_size}, max_overflow={max_overflow})")
     return engine
 
 
@@ -85,7 +63,7 @@ SessionLocal = sessionmaker(
     autocommit=False,
     autoflush=False,
     bind=engine,
-    future=True,  # Use SQLAlchemy 2.0 style
+    future=True,
 )
 
 

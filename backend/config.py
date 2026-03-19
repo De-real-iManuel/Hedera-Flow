@@ -23,9 +23,9 @@ class Settings(BaseSettings):
     environment: str = "development"
     debug: bool = True
     
-    # Database (Supabase PostgreSQL)
+    # Database
     database_url: Optional[str] = None
-    db_pool_size: int = 20
+    db_pool_size: int = 5
     db_max_overflow: int = 10
     db_pool_timeout: int = 30
     
@@ -96,9 +96,15 @@ class Settings(BaseSettings):
 settings = Settings()
 
 # Handle Railway's DATABASE_URL environment variable
-if not settings.database_url and os.getenv('DATABASE_URL'):
-    settings.database_url = os.getenv('DATABASE_URL')
-    print(f"Using Railway DATABASE_URL: {settings.database_url[:50]}...")
+# Railway provides DATABASE_URL directly; also fix postgres:// → postgresql://
+_db_url = os.getenv('DATABASE_URL') or settings.database_url
+if _db_url:
+    if _db_url.startswith("postgres://"):
+        _db_url = _db_url.replace("postgres://", "postgresql://", 1)
+    settings.database_url = _db_url
+    print(f"Database URL configured: {_db_url[:40]}...")
+else:
+    print("WARNING: DATABASE_URL not set — database operations will fail")
 
 # Set Google Cloud credentials environment variable if configured
 if settings.google_application_credentials:
