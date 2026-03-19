@@ -88,6 +88,7 @@ async def seed_tariffs(db: Session = Depends(get_db)):
         ('NG','Abuja Electricity Distribution Company', 'NGN', NG_BANDS, '{"vat":0.075}'),
         ('NG','Enugu Electricity Distribution Company', 'NGN', NG_BANDS, '{"vat":0.075}'),
         ('NG','Port Harcourt Electricity Distribution', 'NGN', NG_BANDS, '{"vat":0.075}'),
+        ('NG','Port Harcourt Electricity Distribution Company', 'NGN', NG_BANDS, '{"vat":0.075}'),
         ('NG','Ibadan Electricity Distribution Company','NGN', NG_BANDS, '{"vat":0.075}'),
         ('NG','Kano Electricity Distribution Company',  'NGN', NG_BANDS, '{"vat":0.075}'),
         ('NG','Kaduna Electricity Distribution Company','NGN', NG_BANDS, '{"vat":0.075}'),
@@ -114,6 +115,19 @@ async def seed_tariffs(db: Session = Depends(get_db)):
     ]
 
     import json as _json
+
+    NG_BANDS_JSON = '{"type":"band_based","bands":[{"name":"A","hours_min":20,"price":225},{"name":"B","hours_min":16,"price":63},{"name":"C","hours_min":12,"price":50},{"name":"D","hours_min":8,"price":43},{"name":"E","hours_min":0,"price":40}]}'
+
+    # Fix any existing NG tariffs that use "band" key instead of "name" key
+    try:
+        db.execute(text(
+            "UPDATE tariffs SET rate_structure = cast(:rs AS jsonb) "
+            "WHERE country_code='NG' AND is_active=true "
+            "AND rate_structure::text LIKE '%\"band\"%'"
+        ), {"rs": NG_BANDS_JSON})
+        db.commit()
+    except Exception as e:
+        db.rollback()
 
     # Remove any bad/stub rows that don't match canonical provider names
     canonical = {r[1] for r in ROWS}
