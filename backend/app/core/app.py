@@ -15,17 +15,43 @@ from app.core.database import close_db, check_db_connection, get_db_stats
 from app.api.routes import api_router
 
 
+def run_schema_migrations():
+    """Run any missing schema migrations on startup."""
+    from sqlalchemy import text
+    from app.core.database import engine
+    sql = """
+    ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS first_name VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS last_name VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS is_email_verified BOOLEAN NOT NULL DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS email_verification_token VARCHAR(255),
+        ADD COLUMN IF NOT EXISTS email_verification_expires TIMESTAMP WITH TIME ZONE,
+        ADD COLUMN IF NOT EXISTS subsidy_eligible BOOLEAN NOT NULL DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS subsidy_type VARCHAR(50),
+        ADD COLUMN IF NOT EXISTS subsidy_verified_at TIMESTAMP WITH TIME ZONE,
+        ADD COLUMN IF NOT EXISTS subsidy_expires_at TIMESTAMP WITH TIME ZONE,
+        ADD COLUMN IF NOT EXISTS preferences JSONB,
+        ADD COLUMN IF NOT EXISTS security_settings JSONB;
+    """
+    try:
+        with engine.connect() as conn:
+            conn.execute(text(sql))
+            conn.commit()
+        print("[OK] Schema migrations applied")
+    except Exception as e:
+        print(f"[WARN] Schema migration skipped: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Application lifespan events
-    Handles startup and shutdown tasks
-    """
-    # Startup
+    """Application lifespan events"""
     print("Starting Hedera Flow API...")
     print(f"Environment: {settings.environment}")
     print(f"Network: {settings.hedera_network}")
-    
+
+    # Run schema migrations before anything else
+    run_schema_migrations()
+
     # Initialize database connection pool
     print("Initializing database connection pool...")
     db_healthy = check_db_connection()
@@ -36,21 +62,13 @@ async def lifespan(app: FastAPI):
         print(f"   - Total connections: {stats['total_connections']}")
     else:
         print("[ERROR] Database connection failed - check DATABASE_URL")
-    
-    # TODO: Initialize Redis connection
-    # TODO: Verify Hedera network connectivity
-    
+
     yield
-    
+
     # Shutdown
     print("Shutting down Hedera Flow API...")
-    
-    # Close database connections
-    print("Closing database connection pool...")
     close_db()
     print("Database connection pool closed")
-    
-    # TODO: Close Redis connections
 
 
 def create_app() -> FastAPI:
