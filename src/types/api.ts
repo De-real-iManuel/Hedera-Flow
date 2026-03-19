@@ -11,6 +11,7 @@ export interface User {
   created_at: string;
   last_login: string | null;
   is_active: boolean;
+  access_token?: string | null; // included in auth responses as cookie fallback
 }
 
 export interface AuthResponse {

@@ -70,17 +70,19 @@ class WalletConnectRequest(BaseModel):
 
 # Response Schemas
 class UserResponse(BaseModel):
-    """User data in responses"""
+    """User data in responses — uses str for enum fields to avoid model/schema enum mismatch"""
     id: str
-    first_name: Optional[str]
-    last_name: Optional[str]
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
     email: str
-    country_code: CountryCode
-    hedera_account_id: Optional[str]
-    wallet_type: Optional[WalletType]
+    country_code: str  # str avoids Pydantic validation error when DB enum != schema enum
+    hedera_account_id: Optional[str] = None
+    wallet_type: Optional[str] = None  # str avoids Pydantic validation error
     created_at: datetime
-    last_login: Optional[datetime]
+    last_login: Optional[datetime] = None
     is_active: bool
+    # Token included in body as fallback for cross-origin cookie issues
+    access_token: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -97,5 +99,5 @@ class TokenPayload(BaseModel):
     user_id: str
     email: str
     country_code: str
-    hedera_account_id: Optional[str]
+    hedera_account_id: Optional[str] = None
     exp: int

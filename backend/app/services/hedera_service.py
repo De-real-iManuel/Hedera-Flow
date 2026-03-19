@@ -394,9 +394,7 @@ _hedera_service: Optional[HederaService] = None
 def get_hedera_service() -> HederaService:
     """
     Get or create global Hedera service instance
-    
-    Returns:
-        HederaService instance
+    Always returns a service instance — falls back to mock mode on any error.
     """
     global _hedera_service
     
@@ -405,8 +403,11 @@ def get_hedera_service() -> HederaService:
             _hedera_service = HederaService()
         except Exception as e:
             logger.error(f"Failed to initialize Hedera service: {e}")
-            # For now, re-raise the exception to make the issue visible
-            # In production, you might want to return a mock service instead
-            raise
+            logger.warning("🎭 Falling back to mock HederaService")
+            # Force mock mode so auth endpoints don't blow up
+            svc = HederaService.__new__(HederaService)
+            svc.client = None
+            svc.mock_mode = True
+            _hedera_service = svc
     
     return _hedera_service

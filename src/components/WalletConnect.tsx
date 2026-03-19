@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { authApi } from '@/lib/api';
+import { setMemoryToken } from '@/lib/api-client';
 
 interface WalletConnectProps {
   className?: string;
@@ -44,9 +45,10 @@ const WalletConnect = ({ className }: WalletConnectProps) => {
       const message = `Hedera Flow Authentication\nAccount: ${accountId}\nTimestamp: ${Date.now()}`;
       const user = await authApi.walletConnect({
         hedera_account_id: accountId,
-        signature: accountId, // MVP: backend accepts account ID as signature
+        signature: accountId,
         message,
       });
+      if (user.access_token) setMemoryToken(user.access_token);
       queryClient.setQueryData(['user'], user);
       toast.success('Wallet connected', { description: 'Redirecting to home...' });
       setTimeout(() => navigate('/home'), 800);

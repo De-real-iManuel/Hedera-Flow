@@ -25,38 +25,20 @@ async def get_current_user(
     db: Session = Depends(get_db)
 ) -> User:
     """
-    Verify JWT token from httpOnly cookie and return current authenticated user
-    
-    This dependency can be used to protect routes that require authentication.
-    It extracts the JWT token from the httpOnly cookie, verifies it,
-    and returns the authenticated user from the database.
-    
-    Requirements:
-        - FR-1.4: System shall use JWT tokens for session management
-        - NFR-2.1: All API endpoints shall require authentication (except public pages)
-        - NFR-2.3: Access tokens shall expire after 15 minutes
-    
-    Args:
-        request: FastAPI request object to access cookies
-        db: Database session
-        
-    Returns:
-        User: Authenticated user object
-        
-    Raises:
-        HTTPException 401: If token is missing, invalid, or expired
-        HTTPException 404: If user not found in database
-        
-    Example usage:
-        @router.get("/protected")
-        async def protected_route(current_user: User = Depends(get_current_user)):
-            return {"user_id": current_user.id}
+    Verify JWT token from httpOnly cookie (or Authorization header fallback)
+    and return current authenticated user.
     """
-    # Extract token from httpOnly cookie
+    # Try cookie first
     token = request.cookies.get("access_token")
     
+    # Fallback: Authorization: Bearer <token> header (for cross-origin cookie issues)
     if not token:
-        logger.warning("Authentication failed: No access token cookie provided")
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+    
+    if not token:
+        logger.warning("Authentication failed: No access token provided")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required",

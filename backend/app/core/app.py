@@ -5,6 +5,7 @@ Creates and configures the FastAPI application instance
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+import os
 
 from config import settings
 from app.core.exceptions import setup_exception_handlers
@@ -96,48 +97,38 @@ def create_app() -> FastAPI:
 
 
 def configure_cors(app: FastAPI) -> None:
-    """
-    Configure CORS middleware
-    Allows cross-origin requests from frontend applications
-    
-    Security considerations:
-    - Production: Only allow specific domains (hederaflow.com)
-    - Development: Allow localhost for Next.js dev server
-    - Credentials: Enabled for JWT cookie support
-    - Methods: All HTTP methods allowed for REST API
-    - Headers: All headers allowed for flexibility
-    """
+    """Configure CORS middleware for cross-origin requests (Vercel → Railway)"""
     # Parse allowed origins from environment variable (comma-separated)
-    allowed_origins = [origin.strip() for origin in settings.cors_origins.split(",")]
+    allowed_origins = [origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()]
     
-    # Add production domains if in production environment
-    if settings.environment == "production":
+    # Always include these Vercel origins explicitly
+    vercel_origins = [
+        "https://hedera-flow-ivory.vercel.app",
+        "https://hederaflow.ai",
+        "https://www.hederaflow.ai",
+    ]
+    allowed_origins = list(set(allowed_origins + vercel_origins))
+    
+    # Add production domains
+    if settings.environment == "production" or os.getenv('RAILWAY_ENVIRONMENT'):
         production_origins = [
             "https://hederaflow.com",
             "https://www.hederaflow.com",
         ]
-        # Merge with any custom origins from env
         allowed_origins = list(set(allowed_origins + production_origins))
     
-    # In development, allow specific localhost origins (cannot use * with credentials)
-    if settings.environment == "development":
+    # In development, add localhost origins
+    if settings.environment == "development" and not os.getenv('RAILWAY_ENVIRONMENT'):
         development_origins = [
-            "http://localhost:3000",  # Next.js default
-            "http://localhost:5173",  # Vite default
-            "http://localhost:8080",  # Alternative port
-            "http://localhost:8081",  # Current frontend port
+            "http://localhost:3000",
+            "http://localhost:5173",
+            "http://localhost:8080",
+            "http://localhost:8081",
             "http://127.0.0.1:3000",
             "http://127.0.0.1:5173",
             "http://127.0.0.1:8080",
-            "http://127.0.0.1:8081",
         ]
-        # Merge with any custom origins from env, but filter out wildcards
-        custom_origins = [origin for origin in allowed_origins if origin != "*"]
-        allowed_origins = list(set(development_origins + custom_origins))
-    
-    # Add CORS middleware
-    # Also allow any *.vercel.app subdomain for Vercel preview deployments
-    vercel_origins = [o for o in allowed_origins if 'vercel.app' in o]
+        allowed_origins = list(set(development_origins + allowed_origins))
     
     app.add_middleware(
         CORSMiddleware,
@@ -147,16 +138,11 @@ def configure_cors(app: FastAPI) -> None:
         allow_methods=["*"],
         allow_headers=["*"],
         expose_headers=["Content-Length", "Content-Type", "Authorization"],
-        max_age=600,  # Cache preflight requests for 10 minutes
+        max_age=600,
     )
     
-    # Log CORS configuration in debug mode
     if settings.debug:
-        print(f"CORS configured:")
-        print(f"   - Allowed origins: {allowed_origins}")
-        print(f"   - Allow credentials: True")
-        print(f"   - Allowed methods: *")
-        print(f"   - Allowed headers: *")
+        print(f"CORS configured with origins: {allowed_origins}")
 
 
 # Create the app instance

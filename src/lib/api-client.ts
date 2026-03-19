@@ -3,7 +3,17 @@ import axios, { AxiosInstance, AxiosError, InternalAxiosRequestConfig } from 'ax
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://hedera-flow-github-production.up.railway.app/api';
 const API_TIMEOUT = parseInt(import.meta.env.VITE_API_TIMEOUT || '30000');
 
-// Create axios instance
+// In-memory token fallback for cross-origin environments where cookies may be blocked
+let memoryToken: string | null = null;
+
+export function setMemoryToken(token: string | null) {
+  memoryToken = token;
+}
+
+export function getMemoryToken(): string | null {
+  return memoryToken;
+}
+
 const apiClient: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
   timeout: API_TIMEOUT,
@@ -13,48 +23,57 @@ const apiClient: AxiosInstance = axios.create({
   },
 });
 
-// Track if we're currently refreshing to avoid multiple refresh attempts
+// Request interceptor — attach memory token as Bearer if present
+apiClient.interceptors.request.use((config) => {
+  if (memoryToken) {
+    config.headers['Authorization'] = `Bearer ${memoryToken}`;
+  }
+  return config;
+});
+
 let isRefreshing = false;
 let failedQueue: Array<{
   resolve: (value?: any) => void;
   reject: (error?: any) => void;
 }> = [];
 
-const processQueue = (error: any, token: string | null = null) => {
+const processQueue = (error: any) => {
   failedQueue.forEach(({ resolve, reject }) => {
-    if (error) {
-      reject(error);
-    } else {
-      resolve(token);
-    }
+    if (error) reject(error);
+    else resolve();
   });
-  
   failedQueue = [];
 };
 
-// Response interceptor - handle errors and token refresh
+// Response interceptor — handle 401s and token refresh
 apiClient.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    // If the response contains an access_token, store it in memory as fallback
+    if (response.data?.access_token) {
+      setMemoryToken(response.data.access_token);
+    }
+    return response;
+  },
   async (error: AxiosError) => {
     const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
 
-    // Don't attempt refresh if:
-    // - the failing request is the refresh endpoint itself (avoid infinite loop)
-    // - the failing request is /auth/me (getCurrentUser on unauthenticated pages is expected)
-    // - we're already on the auth page
     const isRefreshEndpoint = originalRequest.url?.includes('/auth/refresh-token');
     const isGetMeEndpoint = originalRequest.url?.includes('/auth/me');
     const isOnAuthPage = window.location.pathname === '/auth';
 
-    if (error.response?.status === 401 && !originalRequest._retry && !isRefreshEndpoint && !isGetMeEndpoint && !isOnAuthPage) {
+    if (
+      error.response?.status === 401 &&
+      !originalRequest._retry &&
+      !isRefreshEndpoint &&
+      !isGetMeEndpoint &&
+      !isOnAuthPage
+    ) {
       if (isRefreshing) {
         return new Promise((resolve, reject) => {
           failedQueue.push({ resolve, reject });
-        }).then(() => {
-          return apiClient(originalRequest);
-        }).catch((err) => {
-          return Promise.reject(err);
-        });
+        })
+          .then(() => apiClient(originalRequest))
+          .catch((err) => Promise.reject(err));
       }
 
       originalRequest._retry = true;
@@ -65,8 +84,8 @@ apiClient.interceptors.response.use(
         processQueue(null);
         return apiClient(originalRequest);
       } catch (refreshError) {
-        processQueue(refreshError, null);
-        // Only redirect if not already heading there
+        processQueue(refreshError);
+        setMemoryToken(null);
         if (window.location.pathname !== '/auth') {
           window.location.href = '/auth';
         }

@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from datetime import datetime, timedelta
 import logging
 import secrets
+import os
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_user as get_current_user_dependency
@@ -22,22 +23,47 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _build_user_response(user, access_token: str = None) -> UserResponse:
+    """Build UserResponse safely, converting enum values to strings."""
+    country = user.country_code
+    if hasattr(country, 'value'):
+        country = country.value
+    wallet = user.wallet_type
+    if hasattr(wallet, 'value'):
+        wallet = wallet.value
+    return UserResponse(
+        id=str(user.id),
+        first_name=user.first_name,
+        last_name=user.last_name,
+        email=user.email,
+        country_code=country,
+        hedera_account_id=user.hedera_account_id,
+        wallet_type=wallet,
+        created_at=user.created_at,
+        last_login=user.last_login,
+        is_active=user.is_active,
+        access_token=access_token
+    )
+
+
 def set_auth_cookies(response: Response, access_token: str, refresh_token: str):
     """Set httpOnly cookies for authentication tokens"""
-    # Determine if we're in production (use secure cookies only for HTTPS)
-    is_production = getattr(settings, 'environment', 'development') == 'production'
+    # Force samesite=none + secure=True for cross-origin (Vercel → Railway)
+    # This is required regardless of ENVIRONMENT setting
+    # Railway always serves over HTTPS so secure=True is safe
+    is_https = os.getenv('RAILWAY_ENVIRONMENT') is not None or \
+               getattr(settings, 'environment', 'development') == 'production'
     
-    # Cross-site (Vercel frontend → Railway backend) requires samesite="none" + secure=True
-    # Local dev uses samesite="lax" + secure=False
-    samesite = "none" if is_production else "lax"
+    samesite = "none" if is_https else "lax"
+    secure = is_https
     
     # Set access token cookie (15 minutes)
     response.set_cookie(
         key="access_token",
         value=access_token,
-        max_age=15 * 60,  # 15 minutes in seconds
+        max_age=15 * 60,
         httponly=True,
-        secure=is_production,  # samesite=none requires secure=True
+        secure=secure,
         samesite=samesite
     )
     
@@ -45,9 +71,9 @@ def set_auth_cookies(response: Response, access_token: str, refresh_token: str):
     response.set_cookie(
         key="refresh_token", 
         value=refresh_token,
-        max_age=7 * 24 * 60 * 60,  # 7 days in seconds
+        max_age=7 * 24 * 60 * 60,
         httponly=True,
-        secure=is_production,
+        secure=secure,
         samesite=samesite
     )
 
@@ -181,19 +207,8 @@ async def register(
         # Set httpOnly cookies
         set_auth_cookies(response, access_token, refresh_token)
         
-        # Prepare response (no token in body)
-        user_response = UserResponse(
-            id=str(new_user.id),
-            first_name=new_user.first_name,
-            last_name=new_user.last_name,
-            email=new_user.email,
-            country_code=new_user.country_code,
-            hedera_account_id=new_user.hedera_account_id,
-            wallet_type=new_user.wallet_type,
-            created_at=new_user.created_at,
-            last_login=new_user.last_login,
-            is_active=new_user.is_active
-        )
+        # Prepare response (token also in body as fallback for cross-origin cookie issues)
+        user_response = _build_user_response(new_user, access_token)
         
         return user_response
         
@@ -307,19 +322,8 @@ async def login(
         # Set httpOnly cookies
         set_auth_cookies(response, access_token, refresh_token)
         
-        # Prepare response (no token in body)
-        user_response = UserResponse(
-            id=str(user.id),
-            first_name=user.first_name,
-            last_name=user.last_name,
-            email=user.email,
-            country_code=user.country_code,
-            hedera_account_id=user.hedera_account_id,
-            wallet_type=user.wallet_type,
-            created_at=user.created_at,
-            last_login=user.last_login,
-            is_active=user.is_active
-        )
+        # Prepare response (token also in body as fallback)
+        user_response = _build_user_response(user, access_token)
         
         return user_response
         
@@ -454,18 +458,7 @@ async def refresh_token(
         set_auth_cookies(response, new_access_token, new_refresh_token)
         
         # Prepare response (no token in body)
-        user_response = UserResponse(
-            id=str(user.id),
-            first_name=user.first_name,
-            last_name=user.last_name,
-            email=user.email,
-            country_code=user.country_code,
-            hedera_account_id=user.hedera_account_id,
-            wallet_type=user.wallet_type,
-            created_at=user.created_at,
-            last_login=user.last_login,
-            is_active=user.is_active
-        )
+        user_response = _build_user_response(user)
         
         return user_response
         
@@ -501,15 +494,16 @@ async def logout(
         Success message
     """
     try:
-        # Determine if we're in production
-        is_production = getattr(settings, 'environment', 'development') == 'production'
-        samesite = "none" if is_production else "lax"
+        # Use same logic as set_auth_cookies
+        is_https = os.getenv('RAILWAY_ENVIRONMENT') is not None or \
+                   getattr(settings, 'environment', 'development') == 'production'
+        samesite = "none" if is_https else "lax"
         
         # Clear access token cookie
         response.delete_cookie(
             key="access_token",
             httponly=True,
-            secure=is_production,
+            secure=is_https,
             samesite=samesite
         )
         
@@ -517,7 +511,7 @@ async def logout(
         response.delete_cookie(
             key="refresh_token",
             httponly=True,
-            secure=is_production,
+            secure=is_https,
             samesite=samesite
         )
         
@@ -666,19 +660,7 @@ async def wallet_connect(
             # Set httpOnly cookies
             set_auth_cookies(response, access_token, refresh_token)
             
-            # Prepare response (no token in body)
-            user_response = UserResponse(
-                id=str(existing_user.id),
-                first_name=existing_user.first_name,
-                last_name=existing_user.last_name,
-                email=existing_user.email,
-                country_code=existing_user.country_code,
-                hedera_account_id=existing_user.hedera_account_id,
-                wallet_type=existing_user.wallet_type,
-                created_at=existing_user.created_at,
-                last_login=existing_user.last_login,
-                is_active=existing_user.is_active
-            )
+            user_response = _build_user_response(existing_user, access_token)
             
             return user_response
         
@@ -731,19 +713,7 @@ async def wallet_connect(
             # Set httpOnly cookies
             set_auth_cookies(response, access_token, refresh_token)
             
-            # Prepare response (no token in body)
-            user_response = UserResponse(
-                id=str(new_user.id),
-                first_name=new_user.first_name,
-                last_name=new_user.last_name,
-                email=new_user.email,
-                country_code=new_user.country_code,
-                hedera_account_id=new_user.hedera_account_id,
-                wallet_type=new_user.wallet_type,
-                created_at=new_user.created_at,
-                last_login=new_user.last_login,
-                is_active=new_user.is_active
-            )
+            user_response = _build_user_response(new_user, access_token)
             
             return user_response
         
@@ -914,84 +884,7 @@ async def get_current_user_endpoint(
     Raises:
         HTTPException 401: Unauthorized (no valid token)
     """
-    return UserResponse(
-        id=str(current_user.id),
-        first_name=current_user.first_name,
-        last_name=current_user.last_name,
-        email=current_user.email,
-        country_code=current_user.country_code,
-        hedera_account_id=current_user.hedera_account_id,
-        wallet_type=current_user.wallet_type,
-        created_at=current_user.created_at,
-        last_login=current_user.last_login,
-        is_active=current_user.is_active
-    )
-@router.put("/complete-profile", response_model=UserResponse)
-async def complete_profile(
-    first_name: str = Form(..., min_length=1, max_length=100),
-    last_name: str = Form(..., min_length=1, max_length=100),
-    country_code: str = Form(..., pattern=r"^(ES|US|IN|BR|NG)$"),
-    current_user: User = Depends(get_current_user_dependency),
-    db: Session = Depends(get_db)
-):
-    """
-    Complete user profile after wallet-only registration
-
-    This endpoint allows wallet-only users to add their name and country.
-    Required for users who registered via wallet connect without providing
-    personal information.
-
-    Requirements:
-        - Allow wallet users to complete their profile
-        - Update first_name, last_name, and country_code
-
-    Args:
-        first_name: User's first name
-        last_name: User's last name
-        country_code: Country code (ES, US, IN, BR, NG)
-        current_user: Authenticated user
-        db: Database session
-
-    Returns:
-        Updated user data
-
-    Raises:
-        HTTPException 400: Invalid country code
-    """
-    try:
-        # Update user profile
-        current_user.first_name = first_name
-        current_user.last_name = last_name
-        current_user.country_code = CountryCodeEnum[country_code]
-
-        db.commit()
-        db.refresh(current_user)
-
-        logger.info(f"Profile completed for user {current_user.email} (ID: {current_user.id})")
-
-        return UserResponse(
-            id=str(current_user.id),
-            first_name=current_user.first_name,
-            last_name=current_user.last_name,
-            email=current_user.email,
-            country_code=current_user.country_code,
-            hedera_account_id=current_user.hedera_account_id,
-            wallet_type=current_user.wallet_type,
-            created_at=current_user.created_at,
-            last_login=current_user.last_login,
-            is_active=current_user.is_active
-        )
-
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Failed to complete profile: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update profile: {str(e)}"
-        )
-
-
-
+    return _build_user_response(current_user)
 
 
 @router.put("/complete-profile", response_model=UserResponse)
@@ -1037,18 +930,7 @@ async def complete_profile(
         
         logger.info(f"Profile completed for user {current_user.email} (ID: {current_user.id})")
         
-        return UserResponse(
-            id=str(current_user.id),
-            first_name=current_user.first_name,
-            last_name=current_user.last_name,
-            email=current_user.email,
-            country_code=current_user.country_code,
-            hedera_account_id=current_user.hedera_account_id,
-            wallet_type=current_user.wallet_type,
-            created_at=current_user.created_at,
-            last_login=current_user.last_login,
-            is_active=current_user.is_active
-        )
+        return _build_user_response(current_user)
         
     except Exception as e:
         db.rollback()
