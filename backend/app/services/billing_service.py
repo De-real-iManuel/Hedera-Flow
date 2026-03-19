@@ -339,23 +339,28 @@ def _calculate_tiered(
     total_charge = 0.0
     consumed_so_far = 0.0
     
-    for tier in tiers:
-        tier_name = tier['name']
-        tier_min = tier['min_kwh']
-        tier_max = tier.get('max_kwh')  # None means unlimited
+    for i, tier in enumerate(tiers):
+        # Support both schema formats:
+        # Old: {"name":"tier1","min_kwh":0,"max_kwh":500,"price":0.12}
+        # Seed: {"limit":500,"price":0.12}  (limit=None means unlimited last tier)
+        tier_name = tier.get('name', f'Tier {i+1}')
         tier_price = tier['price']
+
+        if 'limit' in tier:
+            # Seed format: limit is the upper bound, no explicit min
+            tier_max = tier['limit']  # None = unlimited
+            tier_min = consumed_so_far
+        else:
+            tier_min = tier.get('min_kwh', consumed_so_far)
+            tier_max = tier.get('max_kwh')  # None means unlimited
         
         # Calculate how much consumption falls in this tier
         if consumption_kwh <= consumed_so_far:
-            # No consumption in this tier
             break
         
         if tier_max is None:
-            # Unlimited tier (last tier) - all remaining consumption
             tier_consumption = consumption_kwh - consumed_so_far
         else:
-            # Calculate consumption in this tier
-            # Consumption in tier = min(remaining, tier_max) - consumed_so_far
             tier_consumption = min(consumption_kwh, tier_max) - consumed_so_far
         
         if tier_consumption > 0:
