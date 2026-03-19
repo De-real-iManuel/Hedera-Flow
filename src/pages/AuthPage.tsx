@@ -27,6 +27,13 @@ const AuthPage = () => {
 
   const loading = isLoginLoading || isRegisterLoading;
 
+  const passwordValid = mode === "login" || (
+    password.length >= 8 &&
+    /[A-Z]/.test(password) &&
+    /[0-9]/.test(password) &&
+    /[a-z]/.test(password)
+  );
+
   const handleAuth = (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -59,7 +66,13 @@ const AuthPage = () => {
             toast.success("Registration successful! Redirecting...");
           },
           onError: (error: any) => {
-            toast.error(error?.response?.data?.detail || "Registration failed");
+            const detail = error?.response?.data?.detail;
+            const msg = typeof detail === "string"
+              ? detail
+              : Array.isArray(detail)
+              ? detail.map((e: any) => e.msg).join(", ")
+              : "Registration failed. Check your details and try again.";
+            toast.error(msg);
           },
         }
       );
@@ -222,10 +235,30 @@ const AuthPage = () => {
               {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
             </button>
           </div>
+          {mode === "signup" && password.length > 0 && (
+            <div className="px-1 space-y-1">
+              {[
+                { label: "At least 8 characters", ok: password.length >= 8 },
+                { label: "One uppercase letter (A–Z)", ok: /[A-Z]/.test(password) },
+                { label: "One number (0–9)", ok: /[0-9]/.test(password) },
+                { label: "One lowercase letter (a–z)", ok: /[a-z]/.test(password) },
+              ].map(({ label, ok }) => (
+                <p key={label} className={`text-xs flex items-center gap-1.5 ${ok ? "text-green-500" : "text-muted-foreground"}`}>
+                  <span>{ok ? "✓" : "○"}</span>
+                  {label}
+                </p>
+              ))}
+            </div>
+          )}
+          {mode === "signup" && password.length === 0 && (
+            <p className="text-xs text-muted-foreground px-1">
+              Password needs: 8+ chars, uppercase, lowercase, and a number.
+            </p>
+          )}
 
           <button
             type="submit"
-            disabled={loading}
+            disabled={loading || !passwordValid}
             className="tap-scale w-full py-4 rounded-2xl gradient-accent text-accent-foreground font-semibold text-base flex items-center justify-center gap-2 disabled:opacity-50"
           >
             {loading ? (
