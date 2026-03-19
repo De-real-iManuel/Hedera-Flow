@@ -226,6 +226,9 @@ def _fetch_tariff_from_db_fuzzy(
             'subsidies': result[6], 'valid_from': result[7], 'valid_until': result[8]
         }
     return None
+
+
+def invalidate_tariff_cache(
     country_code: str,
     utility_provider: str
 ) -> bool:

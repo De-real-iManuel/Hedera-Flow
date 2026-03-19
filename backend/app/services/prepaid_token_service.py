@@ -568,7 +568,7 @@ class PrepaidTokenService:
             from config import settings
             utility_hedera_account = (
                 settings.hedera_treasury_id
-                or "0.0.7942957"  # fallback from VITE_HEDERA_TREASURY_ACCOUNT
+                or "0.0.7942971"  # fallback treasury account
             )
             
             transaction_details = {
