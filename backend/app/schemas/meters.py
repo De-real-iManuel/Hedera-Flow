@@ -3,7 +3,7 @@ Meter Management Schemas
 Pydantic models for meter-related API requests and responses
 """
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 from datetime import datetime
 from enum import Enum
@@ -36,11 +36,10 @@ class MeterCreateRequest(BaseModel):
     address: Optional[str] = Field(None, max_length=500)
     is_primary: bool = False
 
-    @validator('band_classification')
+    @field_validator('band_classification')
+    @classmethod
     def validate_band_for_nigeria(cls, v, values):
         """Band classification is required for Nigeria meters"""
-        # Note: This validation would need country_code from user context
-        # For now, we just validate the field itself
         return v
 
 

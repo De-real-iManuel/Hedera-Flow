@@ -3,10 +3,11 @@ Authentication Schemas
 Pydantic models for authentication-related API requests and responses
 """
 
-from pydantic import BaseModel, EmailStr, Field, validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional
 from datetime import datetime
 from enum import Enum
+import re
 
 
 class CountryCode(str, Enum):
@@ -34,7 +35,8 @@ class RegisterRequest(BaseModel):
     country_code: CountryCode
     hedera_account_id: Optional[str] = Field(None, pattern=r"^0\.0\.\d+$")
 
-    @validator('password')
+    @field_validator('password')
+    @classmethod
     def validate_password(cls, v):
         if v is not None:
             if not any(c.isupper() for c in v):
@@ -56,12 +58,11 @@ class WalletConnectRequest(BaseModel):
     signature: str
     message: str
 
-    @validator('hedera_account_id')
+    @field_validator('hedera_account_id')
+    @classmethod
     def validate_account_format(cls, v):
         """Validate that the account is either Hedera format or EVM format"""
-        import re
         hedera_pattern = r"^0\.0\.\d+$"
-        # Accept any 0x address (MetaMask can return mixed-length addresses)
         evm_pattern = r"^0x[a-fA-F0-9]+$"
         if not (re.match(hedera_pattern, v) or re.match(evm_pattern, v)):
             raise ValueError('Must be a valid Hedera account ID (0.0.xxx) or EVM address (0x...)')

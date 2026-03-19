@@ -3,7 +3,7 @@ Pydantic schemas for subsidy eligibility endpoints
 
 Requirements: FR-4.5 (System shall apply subsidies if user eligible)
 """
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 from datetime import datetime
 
@@ -38,10 +38,11 @@ class SetSubsidyEligibilityRequest(BaseModel):
     subsidy_type: Optional[str] = Field(None, description="Type of subsidy")
     expires_at: Optional[datetime] = Field(None, description="When eligibility expires (optional)")
     
-    @validator('subsidy_type')
-    def validate_subsidy_type(cls, v, values):
+    @field_validator('subsidy_type')
+    @classmethod
+    def validate_subsidy_type(cls, v, info):
         """Validate subsidy type if user is eligible"""
-        if values.get('eligible') and v:
+        if info.data.get('eligible') and v:
             valid_types = ['low_income', 'senior_citizen', 'disability', 'energy_efficiency']
             if v not in valid_types:
                 raise ValueError(f"subsidy_type must be one of: {', '.join(valid_types)}")
