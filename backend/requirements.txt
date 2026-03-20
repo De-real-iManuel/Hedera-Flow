@@ -19,8 +19,9 @@ passlib[bcrypt]==1.7.4
 python-multipart==0.0.6
 pyjwt==2.8.0
 
-# Hedera — pure Python HTTP (no JDK/JVM required)
+# Hedera — pure Python HTTP + gRPC (no JDK/JVM required)
 cryptography>=42.0.0
+grpcio>=1.60.0
 
 # Google Cloud Vision (OCR)
 google-cloud-vision==3.12.1

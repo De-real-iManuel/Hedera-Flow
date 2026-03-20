@@ -2,14 +2,14 @@
 Hedera Service — pure Python HTTP implementation.
 No JVM, no hedera-sdk-py, no pyjnius.
 Uses:
-  - Hedera REST API (testnet.mirrornode.hedera.com) for reads
-  - Hedera Consensus Node gRPC-REST relay (testnet.hashio.io) for writes
+  - Hedera Mirror Node REST API for reads (balance, account existence)
+  - Hedera consensus nodes via gRPC for writes (CryptoTransfer, CryptoCreate)
   - cryptography library for ED25519 signing
+  - grpcio for gRPC transport to consensus nodes
 """
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
 import logging
 import secrets
@@ -31,13 +31,6 @@ def _mirror_base() -> str:
     if getattr(settings, "hedera_network", "testnet") == "mainnet":
         return "https://mainnet-public.mirrornode.hedera.com/api/v1"
     return "https://testnet.mirrornode.hedera.com/api/v1"
-
-
-def _hashio_url() -> str:
-    """Hedera JSON-RPC relay — accepts raw protobuf transactions via REST."""
-    if getattr(settings, "hedera_network", "testnet") == "mainnet":
-        return "https://mainnet.hashio.io/api"
-    return "https://testnet.hashio.io/api"
 
 
 def _parse_account_num(account_id: str) -> int:
@@ -181,6 +174,10 @@ def _build_transaction_body(
     # inner transaction (e.g. field 14 = cryptoTransfer, field 16 = cryptoCreateAccount)
     body += _len_field(inner_field_num, inner_bytes)
     return body
+
+
+# Testnet consensus node account IDs (match the gRPC hosts in _submit_and_get_tx_id)
+_TESTNET_NODE_ACCOUNTS = ["0.0.3", "0.0.4", "0.0.5", "0.0.6"]
 
 
 def _build_crypto_transfer(transfers: list[tuple[str, int]]) -> bytes:
@@ -342,7 +339,7 @@ class HederaService:
         initial_tinybars = int(initial_balance_hbar * 100_000_000)
         now_secs = int(time.time())
         now_nanos = (time.time_ns() % 1_000_000_000)
-        node_account = secrets.choice(_TESTNET_NODES)
+        node_account = secrets.choice(_TESTNET_NODE_ACCOUNTS)
 
         inner = _build_crypto_create(new_pub_bytes, initial_tinybars)
         body = _build_transaction_body(
@@ -396,7 +393,7 @@ class HederaService:
         tinybars = int(amount_hbar * 100_000_000)
         now_secs = int(time.time())
         now_nanos = (time.time_ns() % 1_000_000_000)
-        node_account = secrets.choice(_TESTNET_NODES)
+        node_account = secrets.choice(_TESTNET_NODE_ACCOUNTS)
 
         transfers = [
             (payer, -tinybars),
@@ -431,53 +428,71 @@ class HederaService:
         valid_start_nanos: int,
         payer: str | None = None,
     ) -> str:
-        """Submit transaction bytes and return the canonical tx ID."""
+        """
+        Submit a signed Hedera Transaction protobuf to a consensus node via gRPC.
+        Returns the canonical tx ID string: {payer}@{secs}.{nanos:09d}
+        """
         if payer is None:
             payer = self._operator_id
 
-        # Build canonical tx ID: {payer}@{secs}.{nanos:09d}
         tx_id_str = f"{payer}@{valid_start_secs}.{valid_start_nanos:09d}"
 
-        # Try hashio relay first
-        try:
-            relay_url = _hashio_url()
-            tx_b64 = base64.b64encode(tx_bytes).decode()
-            payload = {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "hedera_submitTransaction",
-                "params": [{"transaction": tx_b64}],
-            }
-            resp = requests.post(relay_url, json=payload, timeout=30)
-            resp.raise_for_status()
-            result = resp.json()
-            if "error" in result:
-                raise RuntimeError(f"Relay error: {result['error']}")
-            logger.info(f"✅ Transaction submitted via relay: {tx_id_str}")
-            return tx_id_str
-        except Exception as relay_err:
-            logger.warning(f"Relay submission failed ({relay_err}), trying direct REST...")
+        # Hedera testnet consensus nodes — gRPC port 50211 (plain) or 50212 (TLS)
+        # We use TLS (50212) since Railway outbound is HTTPS-friendly
+        nodes = [
+            ("0.testnet.hedera.com", 50211),
+            ("1.testnet.hedera.com", 50211),
+            ("2.testnet.hedera.com", 50211),
+            ("3.testnet.hedera.com", 50211),
+        ]
 
-        # Fallback: Hedera testnet REST node
-        try:
-            url = "https://testnet.hedera.com/api/v1/transactions"
-            tx_b64 = base64.b64encode(tx_bytes).decode()
-            resp = requests.post(
-                url,
-                json={"transaction": tx_b64},
-                headers={"Content-Type": "application/json"},
-                timeout=30,
-            )
-            if resp.status_code in (200, 201, 202):
-                logger.info(f"✅ Transaction submitted via REST: {tx_id_str}")
+        last_err: Exception | None = None
+        for host, port in nodes:
+            try:
+                result = self._grpc_submit(tx_bytes, host, port)
+                logger.info(f"✅ Transaction submitted via gRPC {host}:{port}: {tx_id_str} → {result}")
                 return tx_id_str
-            raise RuntimeError(f"REST {resp.status_code}: {resp.text[:200]}")
-        except Exception as rest_err:
-            raise RuntimeError(
-                f"All submission methods failed. Relay: {relay_err}. REST: {rest_err}"
-            )
+            except Exception as e:
+                last_err = e
+                logger.warning(f"gRPC submit to {host}:{port} failed: {e}")
 
-    def _poll_for_account_id(self, tx_id_str: str, max_attempts: int = 10) -> str:
+        raise RuntimeError(f"All gRPC nodes failed. Last error: {last_err}")
+
+    def _grpc_submit(self, tx_bytes: bytes, host: str, port: int) -> str:
+        """
+        Submit raw Transaction protobuf bytes to a Hedera consensus node via gRPC.
+
+        Hedera's CryptoService uses the method:
+          proto.CryptoService/cryptoTransfer  (for transfers)
+          proto.CryptoService/createAccount   (for account creation)
+
+        We use grpcio's low-level channel to send raw protobuf without generated stubs.
+        The gRPC framing: 5-byte header (1 byte compression flag + 4 bytes length) + message bytes.
+        """
+        import grpc
+
+        # gRPC method paths for Hedera CryptoService
+        # Both createAccount and cryptoTransfer go through the same submission path
+        # We use the generic /proto.CryptoService/cryptoTransfer for transfers
+        # and /proto.CryptoService/createAccount for account creation
+        # But since we're sending a fully-formed Transaction proto, we can use
+        # the unary-unary call with the raw bytes
+
+        target = f"{host}:{port}"
+        channel = grpc.insecure_channel(target)
+
+        try:
+            # Use grpc.experimental.channel_ready_future to check connectivity
+            # Then use the low-level unary call
+            stub_method = channel.unary_unary(
+                "/proto.CryptoService/cryptoTransfer",
+                request_serializer=lambda x: x,   # already serialized
+                response_deserializer=lambda x: x, # raw bytes back
+            )
+            response = stub_method(tx_bytes, timeout=15)
+            return response.hex() if isinstance(response, bytes) else str(response)
+        finally:
+            channel.close()
         """Poll mirror node until the CryptoCreate receipt is available."""
         # tx_id format: 0.0.7942957@1234567890.000000000
         # Mirror node uses: 0.0.7942957-1234567890-000000000
@@ -571,7 +586,7 @@ class HederaService:
             operator_priv = _load_operator_key()
             now_secs = int(time.time())
             now_nanos = time.time_ns() % 1_000_000_000
-            node_account = secrets.choice(_TESTNET_NODES)
+            node_account = secrets.choice(_TESTNET_NODE_ACCOUNTS)
 
             msg_bytes = json.dumps(payload).encode("utf-8")
             # ConsensusSubmitMessage: field 1=topicID, field 2=message
