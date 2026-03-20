@@ -21,8 +21,6 @@ pyjwt==2.8.0
 
 # Hedera SDK (JDK 17 is installed in Dockerfile)
 hedera-sdk-py>=2.4.0
-# gRPC for direct consensus node submission (fallback)
-grpcio>=1.60.0
 
 # Google Cloud Vision (OCR)
 google-cloud-vision==3.12.1

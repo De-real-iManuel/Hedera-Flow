@@ -1,13 +1,11 @@
 """
-Hedera Service
-Real Hedera testnet operations via hedera-sdk-py (JDK 17 in Dockerfile).
-Private keys never stored in DB.
+Hedera Service — SDK-only implementation.
+Requires JDK 17 (installed in Dockerfile via openjdk-17-jdk).
 """
 from typing import Tuple, Optional
 import logging
 import json
 import secrets
-import time
 
 from config import settings
 
@@ -15,29 +13,34 @@ logger = logging.getLogger(__name__)
 
 
 def _mirror_base() -> str:
-    if settings.hedera_network == "mainnet":
+    if getattr(settings, "hedera_network", "testnet") == "mainnet":
         return "https://mainnet-public.mirrornode.hedera.com/api/v1"
     return "https://testnet.mirrornode.hedera.com/api/v1"
 
 
 def _get_sdk_client():
-    """Return a configured Hedera SDK client."""
+    """Return a configured Hedera SDK client (requires JDK 17)."""
     from hedera import Client, AccountId, PrivateKey
-    if settings.hedera_network == "mainnet":
+    network = getattr(settings, "hedera_network", "testnet")
+    if network == "mainnet":
         client = Client.forMainnet()
     else:
         client = Client.forTestnet()
     operator_id = getattr(settings, "hedera_operator_id", None)
     operator_key = getattr(settings, "hedera_operator_key", None)
     if not operator_id or not operator_key:
-        raise RuntimeError("HEDERA_OPERATOR_ID and HEDERA_OPERATOR_KEY must be set")
+        raise RuntimeError(
+            "HEDERA_OPERATOR_ID and HEDERA_OPERATOR_KEY must be set. "
+            "Check Railway environment variables."
+        )
     client.setOperator(AccountId.fromString(operator_id), PrivateKey.fromString(operator_key))
     return client
 
 
 class HederaService:
     """
-    Real Hedera service using hedera-sdk-py (requires JDK 17, present in Dockerfile).
+    Real Hedera service using hedera-sdk-py (JDK 17 required, present in Dockerfile).
+    All operations use the official SDK — no gRPC fallback.
     """
 
     def __init__(self):
@@ -46,42 +49,42 @@ class HederaService:
 
         if self._operator_id and self._operator_key:
             logger.info(f"✅ HederaService: operator configured ({self._operator_id})")
-            self.client = True
         else:
             logger.warning("⚠️ HederaService: HEDERA_OPERATOR_ID / HEDERA_OPERATOR_KEY not set")
-            self.client = None
 
     # ------------------------------------------------------------------
-    # HBAR transfer
+    # HBAR transfer — SDK only
     # ------------------------------------------------------------------
 
     def transfer_hbar(self, to_account_id: str, amount_hbar: float, memo: str = "") -> str:
         """
-        Transfer HBAR from operator to to_account_id via SDK.
-        Returns canonical Hedera transaction ID (verifiable on HashScan).
+        Transfer HBAR from operator to to_account_id using hedera-sdk-py.
+        Returns canonical Hedera tx ID (e.g. 0.0.7942971@1234567890.000000000)
+        verifiable on HashScan testnet.
         """
         from hedera import (
-            TransferTransaction, AccountId, Hbar, TransactionId
+            TransferTransaction, AccountId, Hbar, HbarUnit
         )
-
         client = _get_sdk_client()
         try:
-            now = time.time()
-            valid_start_seconds = int(now)
-            valid_start_nanos = int((now - valid_start_seconds) * 1_000_000_000)
+            operator_id = AccountId.fromString(self._operator_id)
+            recipient_id = AccountId.fromString(to_account_id)
+            tinybars = int(amount_hbar * 100_000_000)
 
             tx = (
                 TransferTransaction()
-                .addHbarTransfer(AccountId.fromString(self._operator_id), Hbar(-amount_hbar))
-                .addHbarTransfer(AccountId.fromString(to_account_id), Hbar(amount_hbar))
+                .addHbarTransfer(operator_id, Hbar.fromTinybars(-tinybars))
+                .addHbarTransfer(recipient_id, Hbar.fromTinybars(tinybars))
                 .setTransactionMemo(memo[:100])
                 .setMaxTransactionFee(Hbar(2))
             )
             response = tx.execute(client)
-            tx_id = response.transactionId
-            canonical = str(tx_id)
-            logger.info(f"✅ HBAR transfer submitted: {canonical}")
-            return canonical
+            receipt = response.getReceipt(client)
+
+            # Build canonical tx ID from the transaction ID on the response
+            tx_id = str(response.transactionId)
+            logger.info(f"✅ HBAR transfer {amount_hbar} HBAR → {to_account_id}: {tx_id}")
+            return tx_id
         finally:
             try:
                 client.close()
@@ -89,17 +92,15 @@ class HederaService:
                 pass
 
     # ------------------------------------------------------------------
-    # Account creation
+    # Account creation — SDK only
     # ------------------------------------------------------------------
 
     def create_account(self, initial_balance_hbar: float = 50.0) -> Tuple[str, str]:
         """
-        Create a real Hedera testnet account funded with initial_balance_hbar.
+        Create a real Hedera testnet account funded with initial_balance_hbar HBAR.
         Returns (account_id, private_key_hex).
         """
-        from hedera import (
-            AccountCreateTransaction, PrivateKey, Hbar
-        )
+        from hedera import AccountCreateTransaction, PrivateKey, Hbar
 
         client = _get_sdk_client()
         try:
@@ -113,7 +114,7 @@ class HederaService:
             response = tx.execute(client)
             receipt = response.getReceipt(client)
             account_id = str(receipt.accountId)
-            logger.info(f"✅ Created Hedera account {account_id}")
+            logger.info(f"✅ Created Hedera account {account_id} with {initial_balance_hbar} HBAR")
             return account_id, str(new_key)
         finally:
             try:
@@ -122,7 +123,7 @@ class HederaService:
                 pass
 
     # ------------------------------------------------------------------
-    # Balance check (Mirror Node REST — no SDK needed)
+    # Balance check — Mirror Node REST (no SDK needed)
     # ------------------------------------------------------------------
 
     def get_account_balance(self, account_id: str) -> float:
@@ -183,17 +184,22 @@ class HederaService:
         try:
             from hedera import TopicMessageSubmitTransaction, TopicId
             client = _get_sdk_client()
-            msg_tx = (
-                TopicMessageSubmitTransaction()
-                .setTopicId(TopicId.fromString(topic_id))
-                .setMessage(json.dumps(payload))
-            )
-            response = msg_tx.execute(client)
-            receipt = response.getReceipt(client)
-            seq = receipt.topicSequenceNumber
-            client.close()
-            logger.info(f"✅ HCS message submitted to {topic_id}, seq={seq}")
-            return {"topic_id": topic_id, "sequence_number": seq, "message": payload}
+            try:
+                msg_tx = (
+                    TopicMessageSubmitTransaction()
+                    .setTopicId(TopicId.fromString(topic_id))
+                    .setMessage(json.dumps(payload))
+                )
+                response = msg_tx.execute(client)
+                receipt = response.getReceipt(client)
+                seq = receipt.topicSequenceNumber
+                logger.info(f"✅ HCS message submitted to {topic_id}, seq={seq}")
+                return {"topic_id": topic_id, "sequence_number": seq, "message": payload}
+            finally:
+                try:
+                    client.close()
+                except Exception:
+                    pass
         except Exception as e:
             logger.warning(f"HCS submit failed (non-critical): {e}")
             seq = secrets.randbelow(999999) + 1

@@ -1,3 +1,4 @@
+# Build v2 — SDK-only hedera-sdk-py, no gRPC fallback
 FROM python:3.11-slim
 
 WORKDIR /app
