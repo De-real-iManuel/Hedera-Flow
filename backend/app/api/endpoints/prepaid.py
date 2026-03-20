@@ -1051,23 +1051,33 @@ async def pay_custodial(
             except Exception as kms_err:
                 logger.error(f"KMS key decryption failed: {kms_err}")
 
-        if not payer_private_key_hex:
-            raise HTTPException(
-                status_code=503,
-                detail="Cannot process custodial payment: user private key not available in KMS. "
-                       "Ensure AWS_KMS_MASTER_KEY_ID is set on Railway."
-            )
-
         hedera_svc = _get_hedera()
         try:
-            real_tx_id = hedera_svc.transfer_hbar(
-                to_account_id=treasury_id,
-                amount_hbar=hbar_amount,
-                memo=f"Prepaid payment - {token_id_str}",
-                payer_account_id=user_account_id,
-                payer_private_key_hex=payer_private_key_hex,
-            )
-            logger.info(f"✅ Real Hedera tx submitted (user pays): {real_tx_id}")
+            if payer_private_key_hex:
+                # User's key available — user's account pays (correct custodial flow)
+                real_tx_id = hedera_svc.transfer_hbar(
+                    to_account_id=treasury_id,
+                    amount_hbar=hbar_amount,
+                    memo=f"Prepaid payment - {token_id_str}",
+                    payer_account_id=user_account_id,
+                    payer_private_key_hex=payer_private_key_hex,
+                )
+                logger.info(f"✅ Real Hedera tx submitted (user pays): {real_tx_id}")
+            else:
+                # No KMS key stored — operator pays on behalf of user (legacy accounts)
+                # This happens for users registered before KMS was configured on Railway.
+                # Their account was funded with 50 HBAR by the operator at registration,
+                # so the operator covers this payment as a custodial service.
+                logger.warning(
+                    f"No KMS key for {current_user.email} — operator paying on their behalf. "
+                    f"Re-register or call /health/backfill-hedera-accounts to fix."
+                )
+                real_tx_id = hedera_svc.transfer_hbar(
+                    to_account_id=treasury_id,
+                    amount_hbar=hbar_amount,
+                    memo=f"Prepaid payment (operator) - {token_id_str}",
+                )
+                logger.info(f"✅ Real Hedera tx submitted (operator fallback): {real_tx_id}")
         except Exception as tx_err:
             logger.error(f"Hedera transfer failed: {tx_err}")
             raise HTTPException(
