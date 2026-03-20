@@ -102,6 +102,8 @@ async def fix_schema():
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS subsidy_expires_at TIMESTAMP WITH TIME ZONE",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS preferences JSONB",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS security_settings JSONB",
+        # Widen hedera_tx_id to hold full canonical tx IDs (e.g. 0.0.7942971@1234567890.000000000)
+        "ALTER TABLE prepaid_tokens ALTER COLUMN hedera_tx_id TYPE VARCHAR(255)",
     ]
 
     results = []
@@ -220,6 +222,58 @@ async def seed_tariffs(db: Session = Depends(get_db)):
         "total_active_tariffs": len(all_tariffs),
         "tariffs": [{"country": r[0], "provider": r[1]} for r in all_tariffs]
     }
+
+
+@router.get("/health/hedera-diag")
+async def hedera_diagnostics():
+    """
+    Diagnose Hedera SDK + JVM availability on the running container.
+    Call this to see exactly what's failing before pay-custodial.
+    """
+    import subprocess, shutil, os, sys
+
+    result = {
+        "java_home": os.environ.get("JAVA_HOME"),
+        "path": os.environ.get("PATH"),
+        "java_which": shutil.which("java"),
+        "javac_which": shutil.which("javac"),
+        "java_version": None,
+        "hedera_sdk_importable": False,
+        "hedera_client_init": False,
+        "operator_id_set": bool(getattr(settings, "hedera_operator_id", None)),
+        "operator_key_set": bool(getattr(settings, "hedera_operator_key", None)),
+        "error": None,
+    }
+
+    # Try java -version
+    try:
+        out = subprocess.run(["java", "-version"], capture_output=True, text=True, timeout=10)
+        result["java_version"] = out.stderr.strip() or out.stdout.strip()
+    except Exception as e:
+        result["java_version"] = f"ERROR: {e}"
+
+    # Try importing hedera SDK
+    try:
+        from hedera import Client
+        result["hedera_sdk_importable"] = True
+    except Exception as e:
+        result["error"] = f"hedera import failed: {e}"
+        return result
+
+    # Try creating a client
+    try:
+        from hedera import Client, AccountId, PrivateKey
+        client = Client.forTestnet()
+        op_id = getattr(settings, "hedera_operator_id", None)
+        op_key = getattr(settings, "hedera_operator_key", None)
+        if op_id and op_key:
+            client.setOperator(AccountId.fromString(op_id), PrivateKey.fromString(op_key))
+        client.close()
+        result["hedera_client_init"] = True
+    except Exception as e:
+        result["error"] = f"client init failed: {e}"
+
+    return result
 
 
 @router.post("/health/backfill-hedera-accounts")

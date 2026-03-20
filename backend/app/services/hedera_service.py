@@ -81,8 +81,8 @@ class HederaService:
             response = tx.execute(client)
             receipt = response.getReceipt(client)
 
-            # Build canonical tx ID from the transaction ID on the response
-            tx_id = str(response.transactionId)
+            # .toString() gives canonical "0.0.XXXX@sec.nanos" — str() on the Java object gives garbage
+            tx_id = response.transactionId.toString()
             logger.info(f"✅ HBAR transfer {amount_hbar} HBAR → {to_account_id}: {tx_id}")
             return tx_id
         finally:
