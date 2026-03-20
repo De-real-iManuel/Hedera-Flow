@@ -155,32 +155,20 @@ async def register(
 
                 # 2. Store private key in AWS KMS — key never touches our DB
                 kms_key_id = None
+                encrypted_pk_b64 = None
                 try:
                     from app.services.aws_kms_service import get_kms_service
                     kms = get_kms_service()
                     if kms.is_available:
-                        # Encrypt the private key bytes inside KMS
-                        # We store only the KMS key ARN in our DB
-                        import base64
-                        pk_bytes = private_key_str.encode()
-                        encrypt_resp = kms.kms_client.encrypt(
-                            KeyId=kms.master_key_id,
-                            Plaintext=pk_bytes
-                        )
-                        # Store the ciphertext in KMS Secrets Manager style:
-                        # We keep the KMS key ARN so we can decrypt later for signing
-                        kms_key_id = encrypt_resp['KeyId']  # ARN of the KMS key used
-                        # The encrypted blob is stored in user preferences (not plaintext)
-                        encrypted_pk_b64 = base64.b64encode(encrypt_resp['CiphertextBlob']).decode()
-                        logger.info(f"✅ Private key encrypted in KMS for account {account_id}")
-                        logger.info(f"   KMS Key ARN: {kms_key_id}")
-                        logger.info(f"   Private key NOT stored in database")
-                        # We'll attach encrypted_pk_b64 to user preferences below
+                        context_label = f"user-{request.email}"
+                        encrypted_pk_b64 = kms.store_private_key(private_key_str, context_label)
+                        kms_key_id = kms.master_key_id  # ARN of the symmetric master key
+                        logger.info(f"✅ Private key stored in KMS for {request.email}, account {account_id}")
                     else:
-                        logger.warning("KMS unavailable — private key not persisted (user must save it)")
-                        encrypted_pk_b64 = None
+                        logger.warning(f"⚠️ KMS unavailable — private key for {account_id} not persisted. "
+                                       f"Set AWS_KMS_MASTER_KEY_ID on Railway.")
                 except Exception as kms_err:
-                    logger.error(f"KMS encryption failed: {kms_err}")
+                    logger.error(f"KMS storage failed for {request.email}: {kms_err}")
                     encrypted_pk_b64 = None
 
                 logger.info(f"✅ Hedera account created: {account_id}")

@@ -373,6 +373,58 @@ class AWSKMSService:
             logger.error(f"❌ Failed to enable key rotation: {e}")
             raise KMSServiceError(f"Failed to enable key rotation: {str(e)}")
     
+    def store_private_key(self, private_key_str: str, context_label: str) -> str:
+        """
+        Encrypt a Hedera private key using the KMS master key (symmetric AES-256).
+        Returns a base64-encoded ciphertext blob that can be stored in the DB.
+        The plaintext key NEVER touches the database.
+
+        Args:
+            private_key_str: Raw Hedera private key string
+            context_label: Encryption context label (e.g. user email or ID)
+
+        Returns:
+            base64-encoded ciphertext blob
+        """
+        import base64
+        if not self._available or not self.kms_client:
+            raise KMSServiceError("KMS not available")
+        if not self.master_key_id:
+            raise KMSServiceError("AWS_KMS_MASTER_KEY_ID not configured")
+
+        response = self.kms_client.encrypt(
+            KeyId=self.master_key_id,
+            Plaintext=private_key_str.encode("utf-8"),
+            EncryptionContext={"label": context_label}
+        )
+        ciphertext_b64 = base64.b64encode(response["CiphertextBlob"]).decode("utf-8")
+        logger.info(f"✅ Private key encrypted in KMS for context: {context_label}")
+        return ciphertext_b64
+
+    def get_private_key(self, ciphertext_b64: str, context_label: str) -> str:
+        """
+        Decrypt a previously stored Hedera private key from KMS.
+
+        Args:
+            ciphertext_b64: base64-encoded ciphertext blob from store_private_key
+            context_label: Must match the label used during encryption
+
+        Returns:
+            Plaintext private key string
+        """
+        import base64
+        if not self._available or not self.kms_client:
+            raise KMSServiceError("KMS not available")
+
+        ciphertext = base64.b64decode(ciphertext_b64)
+        response = self.kms_client.decrypt(
+            CiphertextBlob=ciphertext,
+            EncryptionContext={"label": context_label}
+        )
+        private_key_str = response["Plaintext"].decode("utf-8")
+        logger.info(f"✅ Private key decrypted from KMS for context: {context_label}")
+        return private_key_str
+
     def get_key_audit_trail(self, key_id: str, hours: int = 24) -> Dict:
         """
         Get audit trail for KMS key operations

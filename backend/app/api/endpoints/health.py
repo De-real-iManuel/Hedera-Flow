@@ -308,10 +308,17 @@ async def backfill_hedera_accounts(db: Session = Depends(get_db)):
 
             # Store KMS-encrypted key if AWS KMS is configured
             kms_key_id = None
+            encrypted_pk_b64 = None
             try:
-                from app.services.aws_kms_service import AWSKMSService
-                kms = AWSKMSService()
-                kms_key_id = kms.store_private_key(private_key_str, f"hedera-backfill-{str(user_id)[:8]}")
+                from app.services.aws_kms_service import get_kms_service
+                kms = get_kms_service()
+                if kms.is_available:
+                    context_label = f"user-{email}"
+                    encrypted_pk_b64 = kms.store_private_key(private_key_str, context_label)
+                    kms_key_id = kms.master_key_id
+                    logger.info(f"✅ KMS key stored for backfill user {email}")
+                else:
+                    logger.warning(f"KMS unavailable for backfill user {email}")
             except Exception as kms_err:
                 logger.warning(f"KMS storage failed for {email}: {kms_err}")
 
@@ -319,9 +326,19 @@ async def backfill_hedera_accounts(db: Session = Depends(get_db)):
                 UPDATE users
                 SET hedera_account_id = :account_id,
                     kms_key_id = :kms_key_id,
-                    wallet_type = 'system_generated'
+                    wallet_type = 'system_generated',
+                    preferences = jsonb_set(
+                        COALESCE(preferences, '{}'),
+                        '{encrypted_hedera_key}',
+                        to_jsonb(:encrypted_pk::text)
+                    )
                 WHERE id = :user_id
-            """), {"account_id": account_id, "kms_key_id": kms_key_id, "user_id": str(user_id)})
+            """), {
+                "account_id": account_id,
+                "kms_key_id": kms_key_id,
+                "encrypted_pk": encrypted_pk_b64,
+                "user_id": str(user_id)
+            })
             db.commit()
 
             results["success"].append({"email": email, "account_id": account_id})
