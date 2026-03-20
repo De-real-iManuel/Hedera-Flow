@@ -60,7 +60,6 @@ const AppContent = () => {
         <Routes>
           <Route path="/" element={<LandingPage />} />
           <Route path="/auth" element={<AuthPage />} />
-          <Route path="/login-test" element={<LoginTestPage />} />
           <Route path="/verify-email" element={<VerifyEmailPage />} />
           
           {/* Protected Routes */}
