@@ -1026,26 +1026,53 @@ async def pay_custodial(
         if token_status not in ("pending",):
             raise HTTPException(status_code=400, detail=f"Token cannot be paid in status: {token_status}")
 
-        # 2. Submit real HBAR transfer on Hedera testnet via operator key.
-        #    No mock fallback — if this fails, the payment fails cleanly.
+        # 2. Submit real HBAR transfer on Hedera testnet.
+        #    The USER's account pays — we decrypt their private key from KMS.
         from app.services.hedera_service import get_hedera_service as _get_hedera
+        from app.services.aws_kms_service import get_kms_service as _get_kms
 
         treasury_id = _settings.hedera_treasury_id or "0.0.7942971"
         hbar_amount = float(amount_paid_hbar) if amount_paid_hbar else 0.0
+
+        # Retrieve user's encrypted private key from KMS
+        user_account_id = current_user.hedera_account_id
+        payer_private_key_hex: str | None = None
+
+        encrypted_key = (current_user.preferences or {}).get("encrypted_hedera_key")
+        if encrypted_key:
+            try:
+                kms = _get_kms()
+                if kms.is_available:
+                    context_label = f"user-{current_user.email}"
+                    payer_private_key_hex = kms.get_private_key(encrypted_key, context_label)
+                    logger.info(f"✅ Decrypted user private key from KMS for {current_user.email}")
+                else:
+                    logger.warning("KMS unavailable — cannot decrypt user key")
+            except Exception as kms_err:
+                logger.error(f"KMS key decryption failed: {kms_err}")
+
+        if not payer_private_key_hex:
+            raise HTTPException(
+                status_code=503,
+                detail="Cannot process custodial payment: user private key not available in KMS. "
+                       "Ensure AWS_KMS_MASTER_KEY_ID is set on Railway."
+            )
 
         hedera_svc = _get_hedera()
         try:
             real_tx_id = hedera_svc.transfer_hbar(
                 to_account_id=treasury_id,
                 amount_hbar=hbar_amount,
-                memo=f"Prepaid payment - {token_id_str}"
+                memo=f"Prepaid payment - {token_id_str}",
+                payer_account_id=user_account_id,
+                payer_private_key_hex=payer_private_key_hex,
             )
-            logger.info(f"✅ Real Hedera tx submitted: {real_tx_id}")
+            logger.info(f"✅ Real Hedera tx submitted (user pays): {real_tx_id}")
         except Exception as tx_err:
             logger.error(f"Hedera transfer failed: {tx_err}")
             raise HTTPException(
                 status_code=503,
-                detail=f"Hedera payment failed: {str(tx_err)}. Check HEDERA_OPERATOR_ID and HEDERA_OPERATOR_KEY on Railway."
+                detail=f"Hedera payment failed: {str(tx_err)}"
             )
 
         fake_tx_id = real_tx_id
