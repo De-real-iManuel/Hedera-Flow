@@ -78,6 +78,59 @@ async def liveness_check():
     return {"alive": True}
 
 
+@router.post("/health/fix-schema")
+async def fix_schema():
+    """
+    Emergency endpoint: add missing columns to users table.
+    Safe to call multiple times (uses IF NOT EXISTS).
+    Call this immediately after deploy if Railway logs show UndefinedColumn errors.
+    """
+    from sqlalchemy import text
+    from app.core.database import engine
+
+    statements = [
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS evm_address VARCHAR(42)",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS kms_key_id VARCHAR(255)",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name VARCHAR(100)",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name VARCHAR(100)",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_email_verified BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verification_token VARCHAR(255)",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verification_expires TIMESTAMP WITH TIME ZONE",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS subsidy_eligible BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS subsidy_type VARCHAR(50)",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS subsidy_verified_at TIMESTAMP WITH TIME ZONE",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS subsidy_expires_at TIMESTAMP WITH TIME ZONE",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS preferences JSONB",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS security_settings JSONB",
+    ]
+
+    results = []
+    errors = []
+    with engine.connect() as conn:
+        for stmt in statements:
+            try:
+                conn.execute(text(stmt))
+                conn.commit()
+                results.append(f"OK: {stmt}")
+            except Exception as e:
+                errors.append(f"ERR ({stmt}): {str(e)}")
+
+    # Verify columns exist
+    with engine.connect() as conn:
+        cols = conn.execute(text(
+            "SELECT column_name FROM information_schema.columns WHERE table_name='users' ORDER BY column_name"
+        )).fetchall()
+    column_names = [r[0] for r in cols]
+
+    return {
+        "applied": results,
+        "errors": errors,
+        "users_columns": column_names,
+        "evm_address_exists": "evm_address" in column_names,
+        "kms_key_id_exists": "kms_key_id" in column_names,
+    }
+
+
 @router.post("/health/seed-tariffs")
 async def seed_tariffs(db: Session = Depends(get_db)):
     """Force-seed tariffs and return current DB state"""
