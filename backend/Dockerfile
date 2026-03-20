@@ -1,51 +1,38 @@
-# Build v3 — force Railway rebuild with JDK17 for hedera-sdk-py
+# Build v4 — JDK via eclipse-temurin base image, no apt issues
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies including full JDK (required for hedera-sdk-py)
-RUN apt-get update && apt-get install -y \
+# Install JDK 17 + build tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
-    openjdk-17-jdk \
-    openjdk-17-jdk-headless \
+    wget \
+    gnupg \
+    && wget -qO - https://packages.adoptium.net/artifactory/api/gpg/key/public | gpg --dearmor -o /usr/share/keyrings/adoptium.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/adoptium.gpg] https://packages.adoptium.net/artifactory/deb $(. /etc/os-release && echo $VERSION_CODENAME) main" > /etc/apt/sources.list.d/adoptium.list \
+    && apt-get update && apt-get install -y --no-install-recommends temurin-17-jdk \
     && rm -rf /var/lib/apt/lists/*
 
-# Set JAVA_HOME environment variable and add to PATH
-ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+# Set JAVA_HOME
+ENV JAVA_HOME=/usr/lib/jvm/temurin-17-amd64
 ENV PATH="$JAVA_HOME/bin:$PATH"
-ENV JDK_HOME=$JAVA_HOME
-ENV CLASSPATH="$JAVA_HOME/lib/*:."
 
-# Create symlinks to ensure javac is found
-RUN ln -sf $JAVA_HOME/bin/javac /usr/bin/javac
-RUN ln -sf $JAVA_HOME/bin/java /usr/bin/java
-
-# Verify Java installation and show paths
-RUN echo "JAVA_HOME: $JAVA_HOME" && \
-    echo "PATH: $PATH" && \
-    which java && \
-    which javac && \
-    java -version && \
-    javac -version
+# Verify Java
+RUN java -version && javac -version
 
 # Copy requirements first for better caching
-COPY requirements.txt .
+COPY backend/requirements.txt .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy startup script
-COPY start.py .
-RUN chmod +x start.py
-
-# Copy application code
-COPY . .
+# Copy application code (from repo root, backend/ subdir)
+COPY backend/ .
 
 # Set runtime Java environment variables
-ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+ENV JAVA_HOME=/usr/lib/jvm/temurin-17-amd64
 ENV PATH="$JAVA_HOME/bin:$PATH"
-ENV JDK_HOME=$JAVA_HOME
 
 # Expose port
 EXPOSE 8000
