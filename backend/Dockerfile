@@ -1,41 +1,33 @@
-# Build v4 — JDK via eclipse-temurin base image, no apt issues
-FROM python:3.11-slim
+# Build v5 — eclipse-temurin:17 base (JDK pre-installed), add Python
+FROM eclipse-temurin:17-jdk-jammy
+
+# Install Python 3.11
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.11 \
+    python3.11-dev \
+    python3-pip \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/python3.11 /usr/bin/python3 \
+    && ln -sf /usr/bin/python3.11 /usr/bin/python
+
+# Verify both Java and Python
+RUN java -version && javac -version && python3 --version
 
 WORKDIR /app
 
-# Install JDK 17 + build tools
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    g++ \
-    wget \
-    gnupg \
-    && wget -qO - https://packages.adoptium.net/artifactory/api/gpg/key/public | gpg --dearmor -o /usr/share/keyrings/adoptium.gpg \
-    && echo "deb [signed-by=/usr/share/keyrings/adoptium.gpg] https://packages.adoptium.net/artifactory/deb $(. /etc/os-release && echo $VERSION_CODENAME) main" > /etc/apt/sources.list.d/adoptium.list \
-    && apt-get update && apt-get install -y --no-install-recommends temurin-17-jdk \
-    && rm -rf /var/lib/apt/lists/*
-
-# Set JAVA_HOME
-ENV JAVA_HOME=/usr/lib/jvm/temurin-17-amd64
-ENV PATH="$JAVA_HOME/bin:$PATH"
-
-# Verify Java
-RUN java -version && javac -version
-
-# Copy requirements first for better caching
+# Copy and install Python dependencies
 COPY backend/requirements.txt .
+RUN pip3 install --no-cache-dir -r requirements.txt
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy application code (from repo root, backend/ subdir)
+# Copy application code
 COPY backend/ .
 
-# Set runtime Java environment variables
-ENV JAVA_HOME=/usr/lib/jvm/temurin-17-amd64
+# Java env (already set by base image, but be explicit)
+ENV JAVA_HOME=/opt/java/openjdk
 ENV PATH="$JAVA_HOME/bin:$PATH"
 
-# Expose port
 EXPOSE 8000
 
-# Start command
 CMD ["python3", "start.py"]
