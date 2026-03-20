@@ -1,4 +1,4 @@
-# Build v2 — SDK-only hedera-sdk-py, no gRPC fallback
+# Build v3 — force Railway rebuild with JDK17 for hedera-sdk-py
 FROM python:3.11-slim
 
 WORKDIR /app
