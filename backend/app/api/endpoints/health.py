@@ -220,3 +220,62 @@ async def seed_tariffs(db: Session = Depends(get_db)):
         "total_active_tariffs": len(all_tariffs),
         "tariffs": [{"country": r[0], "provider": r[1]} for r in all_tariffs]
     }
+
+
+@router.post("/health/backfill-hedera-accounts")
+async def backfill_hedera_accounts(db: Session = Depends(get_db)):
+    """
+    Attempt to create real Hedera accounts for users that registered before
+    custodial wallet implementation (hedera_account_id IS NULL or starts with 0.0.PENDING_).
+    
+    Requires HEDERA_OPERATOR_ID and HEDERA_OPERATOR_KEY to be set on Railway.
+    Safe to call multiple times — skips users that already have real accounts.
+    """
+    from sqlalchemy import text as _text
+    from app.services.hedera_service import get_hedera_service
+
+    # Find users needing real accounts
+    rows = db.execute(_text("""
+        SELECT id, email FROM users
+        WHERE hedera_account_id IS NULL
+           OR hedera_account_id LIKE '0.0.PENDING_%'
+        ORDER BY created_at ASC
+    """)).fetchall()
+
+    if not rows:
+        return {"message": "No users need backfill", "processed": 0}
+
+    hedera_svc = get_hedera_service()
+    results = {"success": [], "failed": [], "total_pending": len(rows)}
+
+    for user_id, email in rows:
+        try:
+            account_id, private_key_str = hedera_svc.create_account(initial_balance_hbar=10.0)
+
+            # Store KMS-encrypted key if AWS KMS is configured
+            kms_key_id = None
+            try:
+                from app.services.aws_kms_service import AWSKMSService
+                kms = AWSKMSService()
+                kms_key_id = kms.store_private_key(private_key_str, f"hedera-backfill-{str(user_id)[:8]}")
+            except Exception as kms_err:
+                logger.warning(f"KMS storage failed for {email}: {kms_err}")
+
+            db.execute(_text("""
+                UPDATE users
+                SET hedera_account_id = :account_id,
+                    kms_key_id = :kms_key_id,
+                    wallet_type = 'system_generated'
+                WHERE id = :user_id
+            """), {"account_id": account_id, "kms_key_id": kms_key_id, "user_id": str(user_id)})
+            db.commit()
+
+            results["success"].append({"email": email, "account_id": account_id})
+            logger.info(f"✅ Backfilled Hedera account {account_id} for {email}")
+
+        except Exception as e:
+            db.rollback()
+            results["failed"].append({"email": email, "error": str(e)})
+            logger.error(f"Backfill failed for {email}: {e}")
+
+    return results
