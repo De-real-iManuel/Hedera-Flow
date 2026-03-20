@@ -141,4 +141,12 @@ export const prepaidApi = {
     });
     return response.data;
   },
+
+  // Custodial payment — backend signs via AWS KMS, no wallet needed
+  payCustodial: async (tokenId: string): Promise<BuyTokenResponse> => {
+    const response = await apiClient.post<BuyTokenResponse>('/prepaid/pay-custodial', {
+      token_id: tokenId,
+    });
+    return response.data;
+  },
 };

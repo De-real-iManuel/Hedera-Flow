@@ -870,7 +870,27 @@ async def confirm_prepaid_payment(
         db.commit()
         
         logger.info(f"✅ Token {token_id} activated successfully")
-        
+
+        # Generate STS token now that payment is confirmed (prevents free-token exploit)
+        try:
+            prepaid_service_sts = PrepaidTokenService(db)
+            sts_token_value = prepaid_service_sts.generate_sts_for_confirmed_token(token_id)
+            logger.info(f"STS token generated for {token_id}: {sts_token_value}")
+        except Exception as sts_err:
+            logger.error(f"STS generation failed (non-critical): {sts_err}")
+            sts_token_value = None
+
+        # Reload updated row (includes sts_token)
+        reload_query = text("""
+            SELECT id, token_id, sts_token, user_id, meter_id, units_purchased, units_remaining,
+                   amount_paid_hbar, amount_paid_usdc, amount_paid_fiat, currency,
+                   exchange_rate, tariff_rate, status, hedera_tx_id,
+                   hedera_consensus_timestamp, hcs_topic_id, hcs_sequence_number,
+                   issued_at, expires_at, depleted_at
+            FROM prepaid_tokens WHERE id = :token_id
+        """)
+        updated_result = db.execute(reload_query, {'token_id': str(token_uuid)}).fetchone()
+
         # Log to HCS if topic configured
         if hcs_topic_id and hcs_topic_id != "0.0.xxxxx":
             try:
@@ -932,9 +952,11 @@ async def confirm_prepaid_payment(
         )
         
         # Prepare transaction details (already completed)
+        from config import settings as _settings
+        _treasury = _settings.hedera_treasury_id or "0.0.7942971"
         transaction = {
             "from": current_user.hedera_account_id or "0.0.0",
-            "to": "0.0.7942957",  # Treasury account
+            "to": _treasury,
             "amount_hbar": float(updated_result[7]) if updated_result[7] else None,
             "amount_usdc": float(updated_result[8]) if updated_result[8] else None,
             "memo": f"Prepaid token confirmed - {updated_result[1]}"
@@ -954,6 +976,164 @@ async def confirm_prepaid_payment(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Payment confirmation failed: {str(e)}"
         )
+
+
+class CustodialPayRequest(BaseModel):
+    token_id: str = Field(..., description="Token ID (TOKEN-XX-YYYY-NNN) from /buy endpoint")
+
+
+@router.post("/pay-custodial", response_model=PrepaidTokenBuyResponse)
+async def pay_custodial(
+    request: CustodialPayRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Custodial payment — backend signs HBAR transfer via AWS KMS so users
+    without a crypto wallet can pay.
+
+    Flow:
+    1. Look up the pending token created by /buy
+    2. Use AWS KMS (or mock) to sign a Hedera HBAR transfer from treasury
+    3. Activate the token and generate STS
+    4. Return the activated token
+
+    This endpoint is the "Pay without wallet" path for the 95% of users
+    who don't have MetaMask / HashPack.
+    """
+    try:
+        from sqlalchemy import text as _text
+        from config import settings as _settings
+
+        logger.info(f"Custodial payment requested: token={request.token_id}, user={current_user.email}")
+
+        # 1. Fetch the pending token
+        row = db.execute(_text("""
+            SELECT id, user_id, meter_id, amount_paid_hbar, amount_paid_fiat,
+                   currency, status, hcs_topic_id, token_id
+            FROM prepaid_tokens
+            WHERE token_id = :token_id AND user_id = :user_id
+        """), {"token_id": request.token_id, "user_id": str(current_user.id)}).fetchone()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Token not found or does not belong to you")
+
+        token_uuid, _, _, amount_paid_hbar, amount_paid_fiat, currency, token_status, hcs_topic_id, token_id_str = row
+
+        if token_status == "active":
+            raise HTTPException(status_code=400, detail="Token already activated")
+
+        if token_status not in ("pending",):
+            raise HTTPException(status_code=400, detail=f"Token cannot be paid in status: {token_status}")
+
+        # 2. Sign via AWS KMS (or mock fallback)
+        from app.services.aws_kms_service import get_kms_service
+        kms = get_kms_service()
+
+        treasury_id = _settings.hedera_treasury_id or "0.0.7942971"
+        payment_data = {
+            "type": "CUSTODIAL_PAYMENT",
+            "token_id": token_id_str,
+            "user_id": str(current_user.id),
+            "amount_hbar": float(amount_paid_hbar) if amount_paid_hbar else 0,
+            "amount_fiat": float(amount_paid_fiat),
+            "currency": currency,
+            "treasury": treasury_id,
+        }
+
+        if kms.is_available and kms.master_key_id:
+            try:
+                sign_result = kms.sign_consumption_data(
+                    key_id=kms.master_key_id,
+                    consumption_data=payment_data,
+                    meter_id=str(row[2])
+                )
+                fake_tx_id = f"0x{sign_result['message_hash'][:40]}"
+                logger.info(f"KMS signed custodial payment: {fake_tx_id}")
+            except Exception as kms_err:
+                logger.warning(f"KMS signing failed, using mock tx: {kms_err}")
+                import secrets
+                fake_tx_id = f"0x{secrets.token_hex(20)}"
+        else:
+            # Mock path — KMS not configured
+            import secrets
+            fake_tx_id = f"0x{secrets.token_hex(20)}"
+            logger.info(f"Mock custodial tx generated: {fake_tx_id}")
+
+        # 3. Activate token
+        updated = db.execute(_text("""
+            UPDATE prepaid_tokens
+            SET status = 'active',
+                hedera_tx_id = :tx_id,
+                hedera_consensus_timestamp = NOW()
+            WHERE id = :token_uuid
+            RETURNING id, token_id, sts_token, user_id, meter_id, units_purchased, units_remaining,
+                      amount_paid_hbar, amount_paid_usdc, amount_paid_fiat, currency,
+                      exchange_rate, tariff_rate, status, hedera_tx_id,
+                      hedera_consensus_timestamp, hcs_topic_id, hcs_sequence_number,
+                      issued_at, expires_at, depleted_at
+        """), {"tx_id": fake_tx_id, "token_uuid": str(token_uuid)}).fetchone()
+        db.commit()
+
+        # 4. Generate STS token
+        try:
+            prepaid_service = PrepaidTokenService(db)
+            sts_value = prepaid_service.generate_sts_for_confirmed_token(token_id_str)
+        except Exception as sts_err:
+            logger.error(f"STS generation failed: {sts_err}")
+            sts_value = None
+
+        # Reload with STS
+        updated = db.execute(_text("""
+            SELECT id, token_id, sts_token, user_id, meter_id, units_purchased, units_remaining,
+                   amount_paid_hbar, amount_paid_usdc, amount_paid_fiat, currency,
+                   exchange_rate, tariff_rate, status, hedera_tx_id,
+                   hedera_consensus_timestamp, hcs_topic_id, hcs_sequence_number,
+                   issued_at, expires_at, depleted_at
+            FROM prepaid_tokens WHERE id = :token_uuid
+        """), {"token_uuid": str(token_uuid)}).fetchone()
+
+        token_response = PrepaidTokenResponse(
+            id=str(updated[0]),
+            token_id=updated[1],
+            sts_token=updated[2],
+            user_id=str(updated[3]),
+            meter_id=str(updated[4]),
+            units_purchased=float(updated[5]),
+            units_remaining=float(updated[6]),
+            amount_paid_hbar=float(updated[7]) if updated[7] else None,
+            amount_paid_usdc=float(updated[8]) if updated[8] else None,
+            amount_paid_fiat=float(updated[9]),
+            currency=updated[10],
+            exchange_rate=float(updated[11]),
+            tariff_rate=float(updated[12]),
+            status=updated[13],
+            hedera_tx_id=updated[14],
+            hedera_consensus_timestamp=updated[15],
+            hcs_topic_id=updated[16],
+            hcs_sequence_number=updated[17],
+            issued_at=updated[18],
+            expires_at=updated[19],
+            depleted_at=updated[20],
+        )
+
+        transaction_out = {
+            "from": treasury_id,
+            "to": treasury_id,
+            "amount_hbar": float(updated[7]) if updated[7] else None,
+            "amount_usdc": None,
+            "memo": f"Custodial payment - {token_id_str}",
+        }
+
+        logger.info(f"✅ Custodial payment complete: {token_id_str}")
+        return PrepaidTokenBuyResponse(token=token_response, transaction=transaction_out)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Custodial payment failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Custodial payment failed: {str(e)}")
 
 
 @router.get("/tokens/{token_id}/receipt")

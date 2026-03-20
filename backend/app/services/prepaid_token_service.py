@@ -410,8 +410,54 @@ class PrepaidTokenService:
             logger.error(f"Failed to calculate HBAR amount: {e}", exc_info=True)
             raise PrepaidTokenError(f"Failed to calculate HBAR amount: {str(e)}")
 
+    def generate_sts_for_confirmed_token(self, token_id: str) -> str:
+        """
+        Generate and persist STS token after payment is confirmed.
+        Called only from confirm-payment endpoint to prevent free-token exploit.
+        Returns the 20-digit STS token string.
+        """
+        try:
+            row = self.db.execute(text(
+                "SELECT pt.id, pt.units_purchased, pt.amount_paid_fiat, pt.currency, "
+                "       m.meter_id AS physical_meter_id, m.utility_provider, "
+                "       u.country_code "
+                "FROM prepaid_tokens pt "
+                "JOIN meters m ON m.id = pt.meter_id "
+                "JOIN users u ON u.id = pt.user_id "
+                "WHERE pt.token_id = :token_id"
+            ), {"token_id": token_id}).fetchone()
 
-    
+            if not row:
+                raise PrepaidTokenError(f"Token not found: {token_id}")
+
+            _, units_purchased, amount_paid_fiat, currency, physical_meter_id, utility_provider, country_code = row
+            country_code_str = country_code.value if hasattr(country_code, 'value') else str(country_code)
+
+            sts_generator = STSTokenGenerator(
+                utility_provider=utility_provider,
+                country_code=country_code_str
+            )
+            sts_token, _ = sts_generator.generate_token(
+                meter_number=physical_meter_id,
+                units_kwh=float(units_purchased),
+                amount_paid=float(amount_paid_fiat),
+                currency=currency
+            )
+
+            self.db.execute(text(
+                "UPDATE prepaid_tokens SET sts_token = :sts WHERE token_id = :token_id"
+            ), {"sts": sts_token, "token_id": token_id})
+            self.db.commit()
+
+            logger.info(f"STS token generated for confirmed token {token_id}: {sts_token}")
+            return sts_token
+
+        except PrepaidTokenError:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to generate STS for token {token_id}: {e}", exc_info=True)
+            raise PrepaidTokenError(f"Failed to generate STS token: {str(e)}")
+
     def create_token(
         self,
         user_id: str,
@@ -475,28 +521,16 @@ class PrepaidTokenService:
             # Generate token ID
             token_id = self.generate_token_id(country_code)
             
-            # Generate STS token (20-digit electricity meter token)
-            sts_generator = STSTokenGenerator(utility_provider=utility_provider, country_code=country_code)
-            
-            # Get meter number from database
+            # Get meter number from database (needed for STS, stored for later)
             meter_query = text("SELECT meter_id FROM meters WHERE id = :meter_id")
             meter_result = self.db.execute(meter_query, {'meter_id': meter_id}).fetchone()
             
             if not meter_result:
                 raise PrepaidTokenError(f"Meter not found: {meter_id}")
-            
-            meter_number = meter_result[0]  # This should be the physical meter number
-            
-            # Generate 20-digit STS token
-            sts_token, sts_metadata = sts_generator.generate_token(
-                meter_number=meter_number,
-                units_kwh=units_purchased,
-                amount_paid=amount_fiat,
-                currency=currency
-            )
-            
-            logger.info(f"Generated STS token: {sts_token} for meter {meter_number}")
-            logger.info(f"STS metadata: {sts_metadata}")
+
+            # NOTE: STS token is NOT generated here — it is generated only after
+            # payment is confirmed (confirm-payment endpoint) to prevent free token exploit.
+            sts_token = None
 
             # Set expiry to 1 year from now
             issued_at = datetime.utcnow()

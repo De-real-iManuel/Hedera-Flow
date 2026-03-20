@@ -28,6 +28,7 @@ import {
   AlertCircle,
   Loader2,
   Info,
+  CreditCard,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
@@ -87,6 +88,47 @@ export function PrepaidTokenPurchase({
       setError(err instanceof Error ? err.message : 'Failed to calculate preview');
     } finally {
       setCalculating(false);
+    }
+  };
+
+  const handleCustodialPurchase = async () => {
+    if (!user || !preview) return;
+    setLoading(true);
+    setError(null);
+    setLoadingStage('Creating token...');
+    try {
+      // Step 1: Create pending token
+      const buyResponse = await prepaidApi.buy({
+        meter_id: meterId,
+        amount_fiat: amount,
+        currency,
+        payment_method: 'HBAR',
+      });
+
+      if (!buyResponse?.token) throw new Error('Failed to create token');
+
+      const tokenId = buyResponse.token.token_id;
+      setLoadingStage('Processing payment...');
+
+      // Step 2: Custodial payment (backend signs via KMS)
+      const confirmResponse = await prepaidApi.payCustodial(tokenId);
+
+      if (!confirmResponse?.token) throw new Error('Custodial payment failed');
+
+      setLoadingStage('');
+      toast.success('🎉 Token Purchased!', {
+        description: `Token ${confirmResponse.token.token_id} — ${confirmResponse.token.units_purchased.toFixed(2)} kWh`,
+        duration: 6000,
+      });
+
+      if (onSuccess) onSuccess(confirmResponse.token.token_id);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Custodial payment failed';
+      setError(msg);
+      toast.error('❌ Payment Failed', { description: msg, duration: 5000 });
+    } finally {
+      setLoading(false);
+      setLoadingStage('');
     }
   };
 
@@ -509,44 +551,53 @@ export function PrepaidTokenPurchase({
         )}
 
         {/* Action Buttons */}
-        <div className="flex gap-3 pt-4">
-          {onCancel && (
-            <Button
-              variant="outline"
-              onClick={onCancel}
-              disabled={loading}
-              className="flex-1"
-            >
-              Cancel
-            </Button>
-          )}
+        <div className="space-y-3 pt-4">
+          {/* Primary: Pay without wallet (custodial) */}
           <Button
-            onClick={handlePurchase}
+            onClick={handleCustodialPurchase}
             disabled={loading || calculating || !preview || amount <= 0}
-            className="flex-1 bg-purple-600 hover:bg-purple-700 text-white"
+            className="w-full bg-green-600 hover:bg-green-700 text-white"
             size="lg"
           >
-            {loading ? (
+            {loading && loadingStage ? (
               <>
                 <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                {loadingStage || 'Processing...'}
+                {loadingStage}
               </>
             ) : (
               <>
-                <Wallet className="w-5 h-5 mr-2" />
-                Buy with MetaMask
+                <CreditCard className="w-5 h-5 mr-2" />
+                Pay without wallet
                 <ArrowRight className="w-5 h-5 ml-2" />
               </>
             )}
           </Button>
+
+          {/* Secondary: Pay with MetaMask */}
+          <Button
+            onClick={handlePurchase}
+            disabled={loading || calculating || !preview || amount <= 0 || !walletState.evmAddress}
+            variant="outline"
+            className="w-full border-purple-400 text-purple-700 hover:bg-purple-50"
+            size="lg"
+          >
+            <Wallet className="w-5 h-5 mr-2" />
+            Pay with MetaMask
+          </Button>
+
+          {onCancel && (
+            <Button variant="ghost" onClick={onCancel} disabled={loading} className="w-full">
+              Cancel
+            </Button>
+          )}
         </div>
 
-        {/* Wallet Connection Notice */}
+        {/* Wallet Connection Notice — only shown when MetaMask not connected */}
         {!walletState.evmAddress && (
-          <Alert className="bg-yellow-50 border-yellow-200">
-            <AlertCircle className="h-4 w-4 text-yellow-600" />
-            <AlertDescription className="text-sm text-yellow-800">
-              Please connect your MetaMask wallet before purchasing tokens
+          <Alert className="bg-blue-50 border-blue-200">
+            <Info className="h-4 w-4 text-blue-600" />
+            <AlertDescription className="text-sm text-blue-800">
+              No wallet? Use "Pay without wallet" above — no crypto setup needed.
             </AlertDescription>
           </Alert>
         )}

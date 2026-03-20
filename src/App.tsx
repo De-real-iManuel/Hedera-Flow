@@ -25,7 +25,7 @@ import BottomNav from "./components/BottomNav";
 import SplashScreen from "./components/SplashScreen";
 import LandingPage from "./pages/LandingPage";
 import AuthGuard from "./components/AuthGuard";
-import LoginTestPage from "./pages/LoginTestPage";
+import MeterDetailPage from "./pages/MeterDetailPage";
 
 const queryClient = new QueryClient();
 
@@ -67,6 +67,7 @@ const AppContent = () => {
           <Route path="/home" element={<AuthGuard><HomePage /></AuthGuard>} />
           <Route path="/register-meter" element={<AuthGuard><RegisterMeterPage /></AuthGuard>} />
           <Route path="/meters" element={<AuthGuard><MetersPage /></AuthGuard>} />
+          <Route path="/meters/:id" element={<AuthGuard><MeterDetailPage /></AuthGuard>} />
           <Route path="/meter-hub" element={<AuthGuard><MeterHubPage /></AuthGuard>} />
           <Route path="/prepaid" element={<AuthGuard><PrepaidPage /></AuthGuard>} />
           <Route path="/prepaid-meter" element={<AuthGuard><PrepaidMeterPage /></AuthGuard>} />
