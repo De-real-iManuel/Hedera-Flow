@@ -1,7 +1,6 @@
-# Build v5 — eclipse-temurin:17 base (JDK pre-installed), add Python
+# Build v6 — eclipse-temurin:17, root dir = backend/
 FROM eclipse-temurin:17-jdk-jammy
 
-# Install Python 3.11
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.11 \
     python3.11-dev \
@@ -12,19 +11,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && ln -sf /usr/bin/python3.11 /usr/bin/python3 \
     && ln -sf /usr/bin/python3.11 /usr/bin/python
 
-# Verify both Java and Python
 RUN java -version && javac -version && python3 --version
 
 WORKDIR /app
 
-# Copy and install Python dependencies
-COPY backend/requirements.txt .
+COPY requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
 
-# Copy application code
-COPY backend/ .
+COPY . .
 
-# Java env (already set by base image, but be explicit)
 ENV JAVA_HOME=/opt/java/openjdk
 ENV PATH="$JAVA_HOME/bin:$PATH"
 
