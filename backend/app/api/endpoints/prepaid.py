@@ -1026,62 +1026,29 @@ async def pay_custodial(
         if token_status not in ("pending",):
             raise HTTPException(status_code=400, detail=f"Token cannot be paid in status: {token_status}")
 
-        # 2. Sign via AWS KMS (or mock fallback)
+        # 2. Submit real HBAR transfer on Hedera testnet via operator key.
+        #    No mock fallback — if this fails, the payment fails cleanly.
         from app.services.hedera_service import get_hedera_service as _get_hedera
-        from app.services.aws_kms_service import get_kms_service
 
         treasury_id = _settings.hedera_treasury_id or "0.0.7942971"
         hbar_amount = float(amount_paid_hbar) if amount_paid_hbar else 0.0
 
-        # 2a. Attempt a real HBAR transfer on Hedera testnet via operator key.
-        #     The operator account (HEDERA_OPERATOR_ID) pays from its own balance —
-        #     this is the custodial model: we cover the on-chain cost on behalf of the user.
-        real_tx_id = None
         hedera_svc = _get_hedera()
-        if hedera_svc.client and hbar_amount > 0:
-            try:
-                real_tx_id = hedera_svc.transfer_hbar(
-                    to_account_id=treasury_id,
-                    amount_hbar=hbar_amount,
-                    memo=f"Custodial prepaid payment - {token_id_str}"
-                )
-                logger.info(f"✅ Real Hedera tx submitted: {real_tx_id}")
-            except Exception as tx_err:
-                logger.error(f"Hedera transfer failed: {tx_err}")
-                real_tx_id = None
+        try:
+            real_tx_id = hedera_svc.transfer_hbar(
+                to_account_id=treasury_id,
+                amount_hbar=hbar_amount,
+                memo=f"Prepaid payment - {token_id_str}"
+            )
+            logger.info(f"✅ Real Hedera tx submitted: {real_tx_id}")
+        except Exception as tx_err:
+            logger.error(f"Hedera transfer failed: {tx_err}")
+            raise HTTPException(
+                status_code=503,
+                detail=f"Hedera payment failed: {str(tx_err)}. Check HEDERA_OPERATOR_ID and HEDERA_OPERATOR_KEY on Railway."
+            )
 
-        if real_tx_id:
-            fake_tx_id = real_tx_id
-        else:
-            # SDK unavailable or zero-amount — log KMS proof of intent instead
-            kms = get_kms_service()
-            payment_data = {
-                "type": "CUSTODIAL_PAYMENT",
-                "token_id": token_id_str,
-                "user_id": str(current_user.id),
-                "amount_hbar": hbar_amount,
-                "amount_fiat": float(amount_paid_fiat),
-                "currency": currency,
-                "treasury": treasury_id,
-            }
-            if kms.is_available and kms.master_key_id:
-                try:
-                    sign_result = kms.sign_consumption_data(
-                        key_id=kms.master_key_id,
-                        consumption_data=payment_data,
-                        meter_id=str(row[2])
-                    )
-                    # KMS-signed hash — not a Hedera tx, prefix clearly
-                    fake_tx_id = f"KMS-{sign_result['message_hash'][:40]}"
-                    logger.info(f"KMS-signed custodial proof (no live SDK): {fake_tx_id}")
-                except Exception as kms_err:
-                    logger.warning(f"KMS signing failed: {kms_err}")
-                    import secrets as _sec
-                    fake_tx_id = f"MOCK-{_sec.token_hex(16)}"
-            else:
-                import secrets as _sec
-                fake_tx_id = f"MOCK-{_sec.token_hex(16)}"
-                logger.warning(f"No Hedera SDK + no KMS — mock tx: {fake_tx_id}")
+        fake_tx_id = real_tx_id
 
         # 3. Activate token
         updated = db.execute(_text("""
