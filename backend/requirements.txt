@@ -19,9 +19,10 @@ passlib[bcrypt]==1.7.4
 python-multipart==0.0.6
 pyjwt==2.8.0
 
-# Hedera - pure Python gRPC (no JVM required)
+# Hedera SDK (JDK 17 is installed in Dockerfile)
+hedera-sdk-py>=2.4.0
+# gRPC for direct consensus node submission (fallback)
 grpcio>=1.60.0
-hedera-proto>=0.49.1
 
 # Google Cloud Vision (OCR)
 google-cloud-vision==3.12.1
