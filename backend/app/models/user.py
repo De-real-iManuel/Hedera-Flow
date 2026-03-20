@@ -68,6 +68,8 @@ class User(Base):
     
     # Hedera Integration
     hedera_account_id = Column(String(50), unique=True, nullable=True, index=True)
+    evm_address = Column(String(42), unique=True, nullable=True, index=True)  # 0x... EVM address
+    kms_key_id = Column(String(255), nullable=True)  # AWS KMS key ARN — private key NEVER stored here
     wallet_type = Column(
         SQLEnum(WalletTypeEnum, name="wallet_type_enum"),
         default=WalletTypeEnum.HASHPACK,

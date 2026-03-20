@@ -32,7 +32,9 @@ def run_schema_migrations():
         ADD COLUMN IF NOT EXISTS subsidy_verified_at TIMESTAMP WITH TIME ZONE,
         ADD COLUMN IF NOT EXISTS subsidy_expires_at TIMESTAMP WITH TIME ZONE,
         ADD COLUMN IF NOT EXISTS preferences JSONB,
-        ADD COLUMN IF NOT EXISTS security_settings JSONB;
+        ADD COLUMN IF NOT EXISTS security_settings JSONB,
+        ADD COLUMN IF NOT EXISTS evm_address VARCHAR(42),
+        ADD COLUMN IF NOT EXISTS kms_key_id VARCHAR(255);
 
     -- Add unique constraint on provider_code so ON CONFLICT works
     DO $$ BEGIN
