@@ -224,6 +224,50 @@ async def seed_tariffs(db: Session = Depends(get_db)):
     }
 
 
+@router.get("/health/key-diag")
+async def key_diagnostics():
+    """
+    Show the public key derived from HEDERA_OPERATOR_KEY and HEDERA_TREASURY_KEY.
+    Compare these against the on-chain public keys to find the correct key.
+    """
+    import os
+    result = {}
+
+    def derive_pubkey(label: str, key_hex: str):
+        try:
+            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+            from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+            key_hex = key_hex.strip()
+            if key_hex.startswith("302e") or key_hex.startswith("3053"):
+                raw = bytes.fromhex(key_hex)[-32:]
+            elif len(key_hex) == 64:
+                raw = bytes.fromhex(key_hex)
+            else:
+                return {label: f"unrecognised format len={len(key_hex)}"}
+            priv = Ed25519PrivateKey.from_private_bytes(raw)
+            pub = priv.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw).hex()
+            return {label: {"raw_private_first8": raw[:8].hex(), "derived_public_key": pub}}
+        except Exception as e:
+            return {label: f"error: {e}"}
+
+    op_key = getattr(settings, "hedera_operator_key", None) or os.getenv("HEDERA_OPERATOR_KEY")
+    tr_key = os.getenv("HEDERA_TREASURY_KEY")
+
+    if op_key:
+        result.update(derive_pubkey("operator_key", op_key))
+    else:
+        result["operator_key"] = "NOT SET"
+
+    if tr_key and not tr_key.startswith("0.0."):
+        result.update(derive_pubkey("treasury_key", tr_key))
+    else:
+        result["treasury_key"] = tr_key or "NOT SET"
+
+    result["on_chain_operator_pubkey"] = "40b0de049baaa00d0e234367046fc613950e1d85f14d7f512a7887bde9dce482"
+    result["note"] = "derived_public_key must match on_chain_operator_pubkey for the correct account"
+    return result
+
+
 @router.get("/health/hedera-diag")
 async def hedera_diagnostics():
     """

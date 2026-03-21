@@ -32,40 +32,90 @@ def _parse_account_num(account_id: str) -> int:
     return int(account_id.split(".")[-1])
 
 
+def _hex_to_raw32(key_hex: str) -> bytes:
+    """
+    Parse a hex-encoded private key (DER or raw) into 32 raw bytes.
+    Handles the portal.hedera.com export bug where DER keys have a trailing 'd'
+    making them odd-length (97 chars instead of 96).
+    """
+    key_hex = key_hex.strip()
+    # Strip 0x prefix
+    if key_hex.startswith("0x") or key_hex.startswith("0X"):
+        key_hex = key_hex[2:]
+    # Fix odd-length hex (portal export bug — trailing nibble)
+    if len(key_hex) % 2 != 0:
+        key_hex = key_hex[:-1]
+    if key_hex.startswith("302e") or key_hex.startswith("3053") or key_hex.startswith("3030"):
+        # DER PKCS#8: last 32 bytes are the raw private key
+        return bytes.fromhex(key_hex)[-32:]
+    elif len(key_hex) == 64:
+        return bytes.fromhex(key_hex)
+    else:
+        # Try base64 fallback
+        return base64.b64decode(key_hex)[-32:]
+
+
 def _load_operator_key():
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
     raw = getattr(settings, "hedera_operator_key", None)
     if not raw:
         raise RuntimeError("HEDERA_OPERATOR_KEY not set")
-    key_hex = raw.strip()
-    logger.info(f"Operator key hex len={len(key_hex)} prefix={key_hex[:8]}")
-    if key_hex.startswith("302e") or key_hex.startswith("3053"):
-        der_bytes = bytes.fromhex(key_hex)
-        # DER PKCS#8 for Ed25519: last 32 bytes are the raw private key
-        raw_bytes = der_bytes[-32:]
-    elif len(key_hex) == 64:
-        raw_bytes = bytes.fromhex(key_hex)
-    else:
-        raw_bytes = base64.b64decode(key_hex)[-32:]
+    raw_bytes = _hex_to_raw32(raw)
     logger.info(f"Operator raw key (first 8 bytes): {raw_bytes[:8].hex()}")
-    return Ed25519PrivateKey.from_private_bytes(raw_bytes)
+    priv = Ed25519PrivateKey.from_private_bytes(raw_bytes)
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+    derived_pub = priv.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw).hex()
+    logger.info(f"Operator derived public key: {derived_pub}")
+    return priv
 
 
 def _load_ed25519_key_from_hex(hex_str: str):
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    return Ed25519PrivateKey.from_private_bytes(_hex_to_raw32(hex_str))
+
+
+def _load_secp256k1_key(hex_str: str):
+    """Load a secp256k1 private key (used by ECDSA/EVM Hedera accounts)."""
+    from cryptography.hazmat.primitives.asymmetric.ec import (
+        EllipticCurvePrivateKey, SECP256K1, derive_private_key
+    )
     key_hex = hex_str.strip()
-    if key_hex.startswith("302e") or key_hex.startswith("3053"):
-        raw_bytes = bytes.fromhex(key_hex)[-32:]
+    if key_hex.startswith("0x") or key_hex.startswith("0X"):
+        key_hex = key_hex[2:]
+    if len(key_hex) % 2 != 0:
+        key_hex = key_hex[:-1]
+    if key_hex.startswith("3030") or key_hex.startswith("3031"):
+        # DER — last 32 bytes
+        raw = bytes.fromhex(key_hex)[-32:]
     elif len(key_hex) == 64:
-        raw_bytes = bytes.fromhex(key_hex)
+        raw = bytes.fromhex(key_hex)
     else:
-        raw_bytes = base64.b64decode(key_hex)[-32:]
-    return Ed25519PrivateKey.from_private_bytes(raw_bytes)
+        raw = bytes.fromhex(key_hex)[-32:]
+    private_int = int.from_bytes(raw, "big")
+    return derive_private_key(private_int, SECP256K1())
 
 
-# ---------------------------------------------------------------------------
-# Protobuf helpers
-# ---------------------------------------------------------------------------
+def _sign_secp256k1(body_bytes: bytes, private_key) -> bytes:
+    """
+    Build a Hedera Transaction signed with secp256k1 (ECDSA).
+    SignaturePair field 2 = ecdsa_secp256k1 (not field 3 which is ed25519).
+    """
+    from cryptography.hazmat.primitives.asymmetric.ec import ECDSA
+    from cryptography.hazmat.primitives.hashes import SHA256
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+    # Hedera uses the compressed 33-byte public key as prefix
+    pub = private_key.public_key().public_bytes(Encoding.X962, PublicFormat.CompressedPoint)
+    sig_der = private_key.sign(body_bytes, ECDSA(SHA256()))
+
+    # SignaturePair: field 1=pubKeyPrefix, field 2=ecdsa_secp256k1
+    sig_pair = _len_field(1, pub) + _len_field(2, sig_der)
+    sig_map = _len_field(1, sig_pair)
+    signed_tx_bytes = _len_field(1, body_bytes) + _len_field(2, sig_map)
+    return _len_field(4, signed_tx_bytes)
+
+
+
 
 def _varint(n: int) -> bytes:
     buf = []
@@ -145,7 +195,25 @@ def _build_transaction_body(
     return body
 
 
-_TESTNET_NODE_ACCOUNTS = ["0.0.3", "0.0.4", "0.0.5", "0.0.6"]
+def _is_secp256k1_key(key_hex: str) -> bool:
+    """Detect if a hex key is secp256k1 (ECDSA) based on DER prefix 3030/3031."""
+    h = key_hex.strip().lstrip("0x").lstrip("0X")
+    if len(h) % 2 != 0:
+        h = h[:-1]
+    return h.startswith("3030") or h.startswith("3031")
+
+
+def _sign_body(body_bytes: bytes, key_hex: str) -> bytes:
+    """Sign a transaction body with the appropriate algorithm (Ed25519 or secp256k1)."""
+    if _is_secp256k1_key(key_hex):
+        priv = _load_secp256k1_key(key_hex)
+        return _sign_secp256k1(body_bytes, priv)
+    else:
+        priv = _load_ed25519_key_from_hex(key_hex)
+        return _sign_and_wrap(body_bytes, priv)
+
+
+
 
 # Hedera testnet node REST endpoints (port 443, HTTPS)
 # Each node exposes a REST API for transaction submission
@@ -177,21 +245,28 @@ def _build_crypto_create(pub_key_bytes: bytes, initial_tinybars: int) -> bytes:
 
 def _sign_and_wrap(body_bytes: bytes, private_key) -> bytes:
     """
-    Hedera Transaction (new SDK format):
-      Transaction.signedTransactionBytes = serialize(SignedTransaction {
-        bodyBytes = body_bytes,
-        sigMap = SignatureMap { sigPair = [SignaturePair { pubKeyPrefix, ed25519 }] }
-      })
-    Signature is over body_bytes exactly.
+    Build Hedera Transaction using the legacy format that all nodes accept:
+      Transaction {
+        field 1 (body): TransactionBody  -- NOT used for sig verification
+        field 2 (sigs): SignatureList    -- legacy, ignored
+        field 3 (sigMap): SignatureMap { sigPair: [SignaturePair { pubKeyPrefix, ed25519 }] }
+        field 4 (signedTransactionBytes): SignedTransaction { bodyBytes, sigMap }
+      }
+    We use ONLY field 4 (signedTransactionBytes) which is the current standard.
+    The signature is computed over body_bytes.
     """
     from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
     pub = private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
     sig = private_key.sign(body_bytes)
 
+    # SignaturePair: field 1=pubKeyPrefix, field 3=ed25519
     sig_pair = _len_field(1, pub) + _len_field(3, sig)
+    # SignatureMap: field 1=sigPair
     sig_map = _len_field(1, sig_pair)
-    signed_tx = _len_field(1, body_bytes) + _len_field(2, sig_map)
-    return _len_field(4, signed_tx)
+    # SignedTransaction: field 1=bodyBytes, field 2=sigMap
+    signed_tx_bytes = _len_field(1, body_bytes) + _len_field(2, sig_map)
+    # Transaction: field 4=signedTransactionBytes (bytes of serialized SignedTransaction)
+    return _len_field(4, signed_tx_bytes)
 
 
 # ---------------------------------------------------------------------------
@@ -278,7 +353,16 @@ class HederaService:
         self._operator_id = getattr(settings, "hedera_operator_id", None)
         self._operator_key_raw = getattr(settings, "hedera_operator_key", None)
         if self._operator_id and self._operator_key_raw:
-            logger.info(f"HederaService ready: operator={self._operator_id}")
+            # Log derived public key on startup so Railway logs show the mismatch immediately
+            try:
+                raw_bytes = _hex_to_raw32(self._operator_key_raw)
+                from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+                from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+                priv = Ed25519PrivateKey.from_private_bytes(raw_bytes)
+                derived_pub = priv.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw).hex()
+                logger.info(f"HederaService ready: operator={self._operator_id} derived_pubkey={derived_pub}")
+            except Exception as e:
+                logger.warning(f"HederaService: could not derive operator pubkey: {e}")
         else:
             logger.warning("HederaService: HEDERA_OPERATOR_ID / HEDERA_OPERATOR_KEY not set")
 
@@ -287,7 +371,6 @@ class HederaService:
         from cryptography.hazmat.primitives.serialization import (
             Encoding, PublicFormat, PrivateFormat, NoEncryption
         )
-        operator_priv = _load_operator_key()
         new_priv = Ed25519PrivateKey.generate()
         new_pub = new_priv.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
         new_priv_hex = new_priv.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption()).hex()
@@ -304,7 +387,7 @@ class HederaService:
             secs=secs, nanos=nanos,
             inner_field=16, inner=inner,
         )
-        tx_bytes = _sign_and_wrap(body, operator_priv)
+        tx_bytes = _sign_body(body, self._operator_key_raw)
         _submit_grpc(tx_bytes, "/proto.CryptoService/createAccount")
 
         tx_id = f"{self._operator_id}@{secs}.{nanos:09d}"
@@ -321,12 +404,11 @@ class HederaService:
         payer_private_key_hex: str | None = None,
     ) -> str:
         if payer_account_id and payer_private_key_hex:
-            signer = _load_ed25519_key_from_hex(payer_private_key_hex)
             payer = payer_account_id
             logger.info(f"KMS-signed transfer: {payer} → {to_account_id} {amount_hbar} HBAR")
         else:
-            signer = _load_operator_key()
             payer = self._operator_id
+            payer_private_key_hex = self._operator_key_raw
             logger.info(f"Operator transfer: {payer} → {to_account_id} {amount_hbar} HBAR")
 
         tinybars = int(amount_hbar * 100_000_000)
@@ -341,11 +423,11 @@ class HederaService:
             secs=secs, nanos=nanos,
             inner_field=14, inner=inner,
         )
-        tx_bytes = _sign_and_wrap(body, signer)
 
-        # Log the body hex for debugging
+        # Choose signing method based on key type
+        tx_bytes = _sign_body(body, payer_private_key_hex)
+
         logger.info(f"TX body hex (first 60 bytes): {body[:60].hex()}")
-
         _submit_grpc(tx_bytes, "/proto.CryptoService/cryptoTransfer")
 
         tx_id = f"{payer}@{secs}.{nanos:09d}"
@@ -376,7 +458,6 @@ class HederaService:
         }
         try:
             topic_num = _parse_account_num(topic_id)
-            operator_priv = _load_operator_key()
             secs = int(time.time())
             nanos = time.time_ns() % 1_000_000_000
             node = secrets.choice(_TESTNET_NODE_ACCOUNTS)
@@ -389,7 +470,7 @@ class HederaService:
                 secs=secs, nanos=nanos,
                 inner_field=24, inner=inner,
             )
-            tx_bytes = _sign_and_wrap(body, operator_priv)
+            tx_bytes = _sign_body(body, self._operator_key_raw)
             _submit_grpc(tx_bytes, "/proto.ConsensusService/submitMessage")
         except Exception as exc:
             logger.warning(f"HCS submit failed (non-critical): {exc}")
