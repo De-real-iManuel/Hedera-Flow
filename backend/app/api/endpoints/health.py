@@ -2,6 +2,8 @@
 Health Check Endpoints
 System health and status monitoring
 """
+import logging
+
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
@@ -9,6 +11,8 @@ from sqlalchemy import text
 from datetime import datetime
 
 from config import settings
+
+logger = logging.getLogger(__name__)
 from app.core.rate_limit import limiter
 from app.core.database import check_db_connection, get_db_stats, get_db
 
@@ -478,5 +482,77 @@ async def refresh_custodial_wallet(
         except Exception as exc:
             db.rollback()
             results["failed"].append({"email": email, "error": str(exc)})
+
+    return results
+
+
+@router.post("/health/provision-missing-keys")
+async def provision_missing_keys(db: Session = Depends(get_db)):
+    """
+    Create a new Hedera account + KMS key for every user that has no
+    encrypted_hedera_key stored in preferences, regardless of wallet_type.
+
+    This covers users who registered before KMS was wired up on Railway.
+    Safe to call multiple times — skips users that already have a key.
+    """
+    from sqlalchemy import text as _text
+    from app.services.hedera_service import get_hedera_service
+    from app.services.aws_kms_service import get_kms_service
+
+    kms = get_kms_service()
+    if not kms.is_available:
+        return {"error": "AWS KMS not available — check AWS_KMS_MASTER_KEY_ID on Railway"}
+
+    rows = db.execute(_text("""
+        SELECT id, email, hedera_account_id
+        FROM users
+        WHERE preferences IS NULL
+           OR preferences->>'encrypted_hedera_key' IS NULL
+           OR preferences->>'encrypted_hedera_key' = 'null'
+        ORDER BY created_at ASC
+    """)).fetchall()
+
+    if not rows:
+        return {"message": "All users already have KMS keys", "processed": 0}
+
+    hedera_svc = get_hedera_service()
+    results = {"success": [], "failed": [], "total_needing_keys": len(rows)}
+
+    for user_id, email, old_account_id in rows:
+        try:
+            new_account_id, private_key_str = hedera_svc.create_account(initial_balance_hbar=10.0)
+            context_label = f"user-{email}"
+            encrypted_pk_b64 = kms.store_private_key(private_key_str, context_label)
+
+            db.execute(_text("""
+                UPDATE users
+                SET hedera_account_id = :account_id,
+                    kms_key_id = :kms_key_id,
+                    wallet_type = 'system_generated',
+                    preferences = jsonb_set(
+                        COALESCE(preferences, '{}'),
+                        '{encrypted_hedera_key}',
+                        to_jsonb(:encrypted_pk::text)
+                    )
+                WHERE id = :user_id
+            """), {
+                "account_id": new_account_id,
+                "kms_key_id": kms.master_key_id,
+                "encrypted_pk": encrypted_pk_b64,
+                "user_id": str(user_id),
+            })
+            db.commit()
+
+            results["success"].append({
+                "email": email,
+                "old_account": old_account_id,
+                "new_account": new_account_id,
+            })
+            logger.info(f"✅ Provisioned KMS key for {email} → {new_account_id}")
+
+        except Exception as exc:
+            db.rollback()
+            results["failed"].append({"email": email, "error": str(exc)})
+            logger.error(f"provision_missing_keys failed for {email}: {exc}")
 
     return results
