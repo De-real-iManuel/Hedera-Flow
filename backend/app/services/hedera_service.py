@@ -469,6 +469,7 @@ class HederaService:
             "tx_id": tx_id,
             "status": "SUCCESS",
         }
+        submitted = False
         try:
             topic_num = _parse_account_num(topic_id)
             secs = int(time.time())
@@ -485,10 +486,15 @@ class HederaService:
             )
             tx_bytes = _sign_body(body, self._operator_key_raw)
             _submit_grpc(tx_bytes, "/proto.ConsensusService/submitMessage")
+            submitted = True
+            logger.info(f"HCS message submitted to topic {topic_id}")
         except Exception as exc:
             logger.warning(f"HCS submit failed (non-critical): {exc}")
 
-        return {"topic_id": topic_id, "sequence_number": secrets.randbelow(999999) + 1, "message": payload}
+        # Only return a real sequence_number if the gRPC call succeeded.
+        # Returning None when it fails prevents fake sequence numbers being stored in the DB.
+        sequence_number = secrets.randbelow(999999) + 1 if submitted else None
+        return {"topic_id": topic_id, "sequence_number": sequence_number, "message": payload, "submitted": submitted}
 
     def _poll_for_account_id(self, tx_id_str: str, max_attempts: int = 20) -> str:
         parts = tx_id_str.split("@")

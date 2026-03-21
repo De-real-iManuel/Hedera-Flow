@@ -336,8 +336,11 @@ async def create_verification(
                     tx_id=f"VERIFY-{str(verification_id)[:8]}"
                 )
                 hcs_sequence_number = hcs_result.get('sequence_number')
-                hcs_timestamp = datetime.now(timezone.utc)
-                logger.info(f"HCS logging successful: sequence={hcs_sequence_number}")
+                hcs_timestamp = datetime.now(timezone.utc) if hcs_result.get('submitted') else None
+                if hcs_result.get('submitted'):
+                    logger.info(f"HCS logging successful: sequence={hcs_sequence_number}")
+                else:
+                    logger.warning(f"HCS submit failed — sequence not stored")
             except Exception as e:
                 logger.error(f"HCS logging failed (non-critical): {e}")
         else:
