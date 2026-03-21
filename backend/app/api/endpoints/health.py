@@ -350,3 +350,82 @@ async def backfill_hedera_accounts(db: Session = Depends(get_db)):
             logger.error(f"Backfill failed for {email}: {e}")
 
     return results
+
+
+@router.post("/health/refresh-custodial-wallet")
+async def refresh_custodial_wallet(
+    db: Session = Depends(get_db),
+):
+    """
+    Re-generate custodial Hedera wallets for ALL users who have a real account
+    but no KMS-encrypted private key stored (registered before KMS was configured).
+
+    This creates a NEW Hedera account for each such user (funded with 10 HBAR from
+    operator) and stores the private key in AWS KMS. The old account is replaced.
+
+    Safe to call multiple times — skips users that already have a KMS key.
+    """
+    from sqlalchemy import text as _text
+    from app.services.hedera_service import get_hedera_service
+    from app.services.aws_kms_service import get_kms_service
+
+    kms = get_kms_service()
+    if not kms.is_available:
+        return {"error": "AWS KMS not available — set AWS_KMS_MASTER_KEY_ID on Railway"}
+
+    # Find users with a real account but no encrypted key
+    rows = db.execute(_text("""
+        SELECT id, email, hedera_account_id
+        FROM users
+        WHERE wallet_type = 'system_generated'
+          AND (
+            preferences IS NULL
+            OR preferences->>'encrypted_hedera_key' IS NULL
+            OR preferences->>'encrypted_hedera_key' = 'null'
+          )
+        ORDER BY created_at ASC
+    """)).fetchall()
+
+    if not rows:
+        return {"message": "All custodial users already have KMS keys", "processed": 0}
+
+    hedera_svc = get_hedera_service()
+    results = {"success": [], "failed": [], "total_needing_refresh": len(rows)}
+
+    for user_id, email, old_account_id in rows:
+        try:
+            # Create a fresh Hedera account (new key pair, funded by operator)
+            new_account_id, private_key_str = hedera_svc.create_account(initial_balance_hbar=10.0)
+
+            # Store in KMS
+            context_label = f"user-{email}"
+            encrypted_pk_b64 = kms.store_private_key(private_key_str, context_label)
+
+            db.execute(_text("""
+                UPDATE users
+                SET hedera_account_id = :account_id,
+                    kms_key_id = :kms_key_id,
+                    preferences = jsonb_set(
+                        COALESCE(preferences, '{}'),
+                        '{encrypted_hedera_key}',
+                        to_jsonb(:encrypted_pk::text)
+                    )
+                WHERE id = :user_id
+            """), {
+                "account_id": new_account_id,
+                "kms_key_id": kms.master_key_id,
+                "encrypted_pk": encrypted_pk_b64,
+                "user_id": str(user_id),
+            })
+            db.commit()
+
+            results["success"].append({
+                "email": email,
+                "old_account": old_account_id,
+                "new_account": new_account_id,
+            })
+        except Exception as exc:
+            db.rollback()
+            results["failed"].append({"email": email, "error": str(exc)})
+
+    return results
