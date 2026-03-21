@@ -176,8 +176,10 @@ def _build_account_id(shard: int, realm: int, num: int) -> bytes:
 def _build_transaction_id(account_id: str, secs: int, nanos: int) -> bytes:
     parts = account_id.split(".")
     acct = _build_account_id(int(parts[0]), int(parts[1]), int(parts[2]))
-    ts = _i64_field(1, secs) + _i64_field(2, nanos)
-    return _len_field(1, acct) + _len_field(2, ts)
+    # Timestamp: field 1=seconds (int64), field 2=nanos (int32)
+    ts = _i64_field(1, secs) + _u64_field(2, nanos)
+    # TransactionID: field 1=transactionValidStart (Timestamp), field 2=accountID
+    return _len_field(1, ts) + _len_field(2, acct)
 
 
 def _build_transaction_body(
@@ -191,7 +193,7 @@ def _build_transaction_body(
     body += _u64_field(3, fee)
     body += _len_field(4, _i64_field(1, duration))
     if memo:
-        body += _len_field(9, memo.encode("utf-8"))
+        body += _len_field(5, memo.encode("utf-8"))  # field 5 = memo in TransactionBody proto
     body += _len_field(inner_field, inner)
     return body
 
