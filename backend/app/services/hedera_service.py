@@ -215,8 +215,9 @@ def _sign_body(body_bytes: bytes, key_hex: str) -> bytes:
 
 
 
+_TESTNET_NODE_ACCOUNTS = ["0.0.3", "0.0.4", "0.0.5", "0.0.6"]
+
 # Hedera testnet node REST endpoints (port 443, HTTPS)
-# Each node exposes a REST API for transaction submission
 _TESTNET_NODE_HOSTS = [
     "https://0.testnet.hedera.com",
     "https://1.testnet.hedera.com",
