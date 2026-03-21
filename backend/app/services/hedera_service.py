@@ -59,10 +59,11 @@ def _load_ed25519_key_from_hex(hex_str: str):
 
 
 # ---------------------------------------------------------------------------
-# Protobuf helpers (no protobuf library needed)
+# Protobuf helpers
 # ---------------------------------------------------------------------------
 
 def _varint(n: int) -> bytes:
+    """Encode unsigned varint."""
     buf = []
     while True:
         b = n & 0x7F
@@ -75,6 +76,19 @@ def _varint(n: int) -> bytes:
     return bytes(buf)
 
 
+def _sint64(n: int) -> bytes:
+    """Zigzag-encode a signed int64 for sint64 proto fields (used by AccountAmount.amount)."""
+    encoded = (n << 1) ^ (n >> 63)
+    return _varint(encoded & 0xFFFFFFFFFFFFFFFF)
+
+
+def _int64(n: int) -> bytes:
+    """Encode a signed int64 as varint (two's complement for negatives)."""
+    if n < 0:
+        n = n + (1 << 64)
+    return _varint(n)
+
+
 def _field(field_num: int, wire_type: int, data: bytes) -> bytes:
     return _varint((field_num << 3) | wire_type) + data
 
@@ -83,25 +97,34 @@ def _len_field(field_num: int, data: bytes) -> bytes:
     return _field(field_num, 2, _varint(len(data)) + data)
 
 
-def _int64_field(field_num: int, value: int) -> bytes:
-    if value < 0:
-        value = value + (1 << 64)
+def _uint64_field(field_num: int, value: int) -> bytes:
     return _field(field_num, 0, _varint(value))
+
+
+def _int64_field(field_num: int, value: int) -> bytes:
+    """Plain int64 field (timestamps, fees, durations — NOT amounts)."""
+    return _field(field_num, 0, _int64(value))
+
+
+def _sint64_field(field_num: int, value: int) -> bytes:
+    """Zigzag sint64 field (AccountAmount.amount)."""
+    return _field(field_num, 0, _sint64(value))
 
 
 def _build_account_id(shard: int, realm: int, num: int) -> bytes:
     data = b""
     if shard:
-        data += _int64_field(1, shard)
+        data += _uint64_field(1, shard)
     if realm:
-        data += _int64_field(2, realm)
-    data += _int64_field(3, num)
+        data += _uint64_field(2, realm)
+    data += _uint64_field(3, num)
     return data
 
 
 def _build_transaction_id(account_id: str, secs: int, nanos: int) -> bytes:
     parts = account_id.split(".")
     acct = _build_account_id(int(parts[0]), int(parts[1]), int(parts[2]))
+    # Timestamp uses int64 fields (not sint64)
     ts = _int64_field(1, secs) + _int64_field(2, nanos)
     return _len_field(1, acct) + _len_field(2, ts)
 
@@ -114,7 +137,7 @@ def _build_transaction_body(
     body = _len_field(1, _build_transaction_id(payer, secs, nanos))
     node_parts = node.split(".")
     body += _len_field(2, _build_account_id(int(node_parts[0]), int(node_parts[1]), int(node_parts[2])))
-    body += _field(3, 0, _varint(fee))
+    body += _uint64_field(3, fee)
     body += _len_field(4, _int64_field(1, duration))
     if memo:
         body += _len_field(9, memo.encode("utf-8"))
@@ -126,11 +149,16 @@ _TESTNET_NODE_ACCOUNTS = ["0.0.3", "0.0.4", "0.0.5", "0.0.6"]
 
 
 def _build_crypto_transfer(transfers: list) -> bytes:
+    """
+    Build CryptoTransferTransactionBody.
+    AccountAmount.amount is sint64 (zigzag encoded).
+    """
     transfer_list = b""
     for acct_str, amount in transfers:
         parts = acct_str.split(".")
         acct = _build_account_id(int(parts[0]), int(parts[1]), int(parts[2]))
-        aa = _len_field(1, acct) + _int64_field(2, amount)
+        # field 2 = amount, type sint64 — MUST use zigzag encoding
+        aa = _len_field(1, acct) + _sint64_field(2, amount)
         transfer_list += _len_field(1, aa)
     return _len_field(1, transfer_list)
 
@@ -138,18 +166,28 @@ def _build_crypto_transfer(transfers: list) -> bytes:
 def _build_crypto_create(pub_key_bytes: bytes, initial_tinybars: int) -> bytes:
     key_proto = _len_field(1, pub_key_bytes)
     body = _len_field(1, key_proto)
-    body += _field(2, 0, _varint(initial_tinybars))
+    body += _uint64_field(2, initial_tinybars)
     body += _len_field(8, _int64_field(1, 7776000))  # 90 day auto-renew
     return body
 
 
 def _sign_and_wrap(body_bytes: bytes, private_key) -> bytes:
+    """
+    Build a Hedera Transaction proto:
+      Transaction { signedTransactionBytes = SignedTransaction { bodyBytes, sigMap } }
+    The signature is over bodyBytes (the raw serialized TransactionBody).
+    """
     from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
     pub = private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
     sig = private_key.sign(body_bytes)
+
+    # SignaturePair: field 1=pubKeyPrefix (bytes), field 3=ed25519 sig (bytes)
     sig_pair = _len_field(1, pub) + _len_field(3, sig)
+    # SignatureMap: field 1=sigPair (repeated)
     sig_map = _len_field(1, sig_pair)
+    # SignedTransaction: field 1=bodyBytes, field 2=sigMap
     signed_tx = _len_field(1, body_bytes) + _len_field(2, sig_map)
+    # Transaction: field 4=signedTransactionBytes
     return _len_field(4, signed_tx)
 
 
@@ -213,7 +251,7 @@ def _submit_grpc(tx_bytes: bytes, method: str) -> None:
                 logger.info(f"gRPC OK {host}:{port} code={code}")
                 return
             if code == 11:
-                last_err = RuntimeError(f"node busy code=11")
+                last_err = RuntimeError("node busy code=11")
                 logger.warning(f"{host} busy, trying next")
                 continue
             raise RuntimeError(f"precheck failed code={code}")
@@ -230,7 +268,13 @@ def _submit_grpc(tx_bytes: bytes, method: str) -> None:
 # ---------------------------------------------------------------------------
 
 class HederaService:
-    """Pure-Python Hedera service. gRPC writes, Mirror Node reads."""
+    """
+    Pure-Python Hedera service.
+    - Writes via gRPC to consensus nodes (port 50211)
+    - Reads via Mirror Node REST API
+    - Each user has their own custodial wallet; private key stored in AWS KMS
+    - KMS decrypts the user's key at payment time — key never stored in DB
+    """
 
     def __init__(self):
         self._operator_id = getattr(settings, "hedera_operator_id", None)
@@ -241,7 +285,11 @@ class HederaService:
             logger.warning("HederaService: HEDERA_OPERATOR_ID / HEDERA_OPERATOR_KEY not set")
 
     def create_account(self, initial_balance_hbar: float = 50.0) -> Tuple[str, str]:
-        """Create account funded with initial_balance_hbar. Returns (account_id, priv_hex)."""
+        """
+        Create a new Hedera custodial account funded with initial_balance_hbar HBAR.
+        Operator pays the creation fee and seeds the initial balance.
+        Returns (account_id, private_key_hex) — caller must store key in KMS immediately.
+        """
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
         from cryptography.hazmat.primitives.serialization import (
             Encoding, PublicFormat, PrivateFormat, NoEncryption
@@ -258,7 +306,7 @@ class HederaService:
         inner = _build_crypto_create(new_pub, int(initial_balance_hbar * 100_000_000))
         body = _build_transaction_body(
             payer=self._operator_id, node=node,
-            memo="HederaFlow account creation",
+            memo="HederaFlow custodial account",
             fee=200_000_000, duration=120,
             secs=secs, nanos=nanos,
             inner_field=16, inner=inner,
@@ -268,7 +316,7 @@ class HederaService:
 
         tx_id = f"{self._operator_id}@{secs}.{nanos:09d}"
         account_id = self._poll_for_account_id(tx_id)
-        logger.info(f"Created account {account_id} with {initial_balance_hbar} HBAR")
+        logger.info(f"Created custodial account {account_id} funded with {initial_balance_hbar} HBAR")
         return account_id, new_priv_hex
 
     def transfer_hbar(
@@ -279,19 +327,28 @@ class HederaService:
         payer_account_id: str | None = None,
         payer_private_key_hex: str | None = None,
     ) -> str:
-        """Transfer HBAR. User pays if payer creds provided, else operator pays."""
+        """
+        Transfer HBAR.
+        - If payer_account_id + payer_private_key_hex provided: user's custodial wallet pays
+          (key was decrypted from AWS KMS by the caller)
+        - Otherwise: operator pays (only for account seeding, not for purchases)
+        Returns canonical tx ID string.
+        """
         if payer_account_id and payer_private_key_hex:
             signer = _load_ed25519_key_from_hex(payer_private_key_hex)
             payer = payer_account_id
+            logger.info(f"KMS-signed transfer: {payer} → {to_account_id} {amount_hbar} HBAR")
         else:
             signer = _load_operator_key()
             payer = self._operator_id
+            logger.info(f"Operator transfer: {payer} → {to_account_id} {amount_hbar} HBAR")
 
         tinybars = int(amount_hbar * 100_000_000)
         secs = int(time.time())
         nanos = time.time_ns() % 1_000_000_000
         node = secrets.choice(_TESTNET_NODE_ACCOUNTS)
 
+        # transfers must sum to zero; amounts use sint64 (zigzag)
         inner = _build_crypto_transfer([(payer, -tinybars), (to_account_id, tinybars)])
         body = _build_transaction_body(
             payer=payer, node=node,
@@ -303,7 +360,7 @@ class HederaService:
         _submit_grpc(tx_bytes, "/proto.CryptoService/cryptoTransfer")
 
         tx_id = f"{payer}@{secs}.{nanos:09d}"
-        logger.info(f"Transferred {amount_hbar} HBAR to {to_account_id}: {tx_id}")
+        logger.info(f"HBAR transfer complete: {tx_id}")
         return tx_id
 
     def log_payment_to_hcs(
