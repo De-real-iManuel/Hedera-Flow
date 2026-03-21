@@ -314,6 +314,17 @@ async def buy_prepaid_token(
         # Get country code and utility provider from meter
         country_code_str = current_user.country_code.value if hasattr(current_user.country_code, 'value') else str(current_user.country_code)
         
+        # Calculate exchange rate + crypto amount before creating token
+        # so amount_paid_hbar is stored correctly in the DB
+        from app.services.exchange_rate_service import ExchangeRateService
+        _exchange_svc = ExchangeRateService(db)
+        try:
+            _exchange_rate = _exchange_svc.get_hbar_price(request.currency)
+            _amount_crypto = float(request.amount_fiat) / _exchange_rate
+        except Exception:
+            _exchange_rate = None
+            _amount_crypto = None
+
         # Create token (this will calculate units, generate token ID, and prepare transaction)
         token_data = prepaid_service.create_token(
             user_id=str(current_user.id),
@@ -322,7 +333,9 @@ async def buy_prepaid_token(
             currency=request.currency,
             country_code=country_code_str,
             utility_provider=meter.utility_provider,
-            payment_method=request.payment_method
+            payment_method=request.payment_method,
+            amount_crypto=_amount_crypto,
+            exchange_rate=_exchange_rate,
         )
         
         logger.info(
@@ -1033,6 +1046,18 @@ async def pay_custodial(
 
         treasury_id = _settings.hedera_treasury_id or "0.0.7942971"
         hbar_amount = float(amount_paid_hbar) if amount_paid_hbar else 0.0
+
+        # If hbar_amount is 0 (legacy token without amount stored), recalculate from fiat
+        if hbar_amount <= 0 and amount_paid_fiat:
+            try:
+                from app.services.exchange_rate_service import ExchangeRateService
+                _ex = ExchangeRateService(db)
+                _rate = _ex.get_hbar_price(currency)
+                hbar_amount = float(amount_paid_fiat) / _rate
+                logger.info(f"Recalculated hbar_amount={hbar_amount} from fiat={amount_paid_fiat} {currency} rate={_rate}")
+            except Exception as _ex_err:
+                logger.error(f"Exchange rate recalc failed: {_ex_err}")
+                raise HTTPException(status_code=503, detail="Cannot determine HBAR amount for payment")
 
         # Retrieve user's encrypted private key from KMS
         user_account_id = current_user.hedera_account_id
