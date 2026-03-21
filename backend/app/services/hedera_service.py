@@ -34,24 +34,25 @@ def _parse_account_num(account_id: str) -> int:
 
 def _hex_to_raw32(key_hex: str) -> bytes:
     """
-    Parse a hex-encoded private key (DER or raw) into 32 raw bytes.
-    Handles the portal.hedera.com export bug where DER keys have a trailing 'd'
-    making them odd-length (97 chars instead of 96).
+    Parse a hex-encoded Ed25519 private key (DER or raw) into raw bytes.
+    Ed25519 raw keys are 32 bytes. DER PKCS#8 wraps them — last 32 bytes are the key.
+    NOTE: Do NOT strip trailing nibbles — the full DER must be parsed correctly.
     """
     key_hex = key_hex.strip()
-    # Strip 0x prefix
     if key_hex.startswith("0x") or key_hex.startswith("0X"):
         key_hex = key_hex[2:]
-    # Fix odd-length hex (portal export bug — trailing nibble)
-    if len(key_hex) % 2 != 0:
+    # Pad odd-length only if it's NOT a DER key (raw hex with typo)
+    is_der = key_hex.startswith("302e") or key_hex.startswith("3053") or key_hex.startswith("3030")
+    if not is_der and len(key_hex) % 2 != 0:
         key_hex = key_hex[:-1]
-    if key_hex.startswith("302e") or key_hex.startswith("3053") or key_hex.startswith("3030"):
+    if is_der:
         # DER PKCS#8: last 32 bytes are the raw private key
         return bytes.fromhex(key_hex)[-32:]
-    elif len(key_hex) == 64:
-        return bytes.fromhex(key_hex)
+    elif len(key_hex) >= 64:
+        # Raw hex — take last 32 bytes (handles 33-byte keys)
+        raw = bytes.fromhex(key_hex)
+        return raw[-32:]
     else:
-        # Try base64 fallback
         return base64.b64decode(key_hex)[-32:]
 
 
@@ -196,11 +197,22 @@ def _build_transaction_body(
 
 
 def _is_secp256k1_key(key_hex: str) -> bool:
-    """Detect if a hex key is secp256k1 (ECDSA) based on DER prefix 3030/3031."""
+    """
+    Detect secp256k1 key by DER prefix OR by explicit env var HEDERA_OPERATOR_KEY_TYPE=secp256k1.
+    DER secp256k1 PKCS#8 starts with 3030 or 3031.
+    Raw 64-char hex keys are ambiguous — check env var HEDERA_KEY_TYPE to disambiguate.
+    """
+    import os
     h = key_hex.strip().lstrip("0x").lstrip("0X")
     if len(h) % 2 != 0:
         h = h[:-1]
-    return h.startswith("3030") or h.startswith("3031")
+    if h.startswith("3030") or h.startswith("3031"):
+        return True
+    # Explicit override via env var
+    key_type = os.getenv("HEDERA_KEY_TYPE", "").lower()
+    if key_type == "secp256k1":
+        return True
+    return False
 
 
 def _sign_body(body_bytes: bytes, key_hex: str) -> bytes:

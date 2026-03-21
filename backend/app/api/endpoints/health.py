@@ -235,18 +235,25 @@ async def key_diagnostics():
 
     def derive_pubkey(label: str, key_hex: str):
         try:
-            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-            from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+            from app.services.hedera_service import _is_secp256k1_key, _hex_to_raw32
             key_hex = key_hex.strip()
-            if key_hex.startswith("302e") or key_hex.startswith("3053"):
-                raw = bytes.fromhex(key_hex)[-32:]
-            elif len(key_hex) == 64:
-                raw = bytes.fromhex(key_hex)
+            if _is_secp256k1_key(key_hex):
+                from cryptography.hazmat.primitives.asymmetric.ec import SECP256K1, derive_private_key
+                from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+                h = key_hex.lstrip("0x")
+                if len(h) % 2 != 0:
+                    h = h[:-1]
+                raw = bytes.fromhex(h)[-32:]
+                priv = derive_private_key(int.from_bytes(raw, "big"), SECP256K1())
+                pub = priv.public_key().public_bytes(Encoding.X962, PublicFormat.CompressedPoint).hex()
+                return {label: {"type": "secp256k1", "raw_private_first8": raw[:8].hex(), "derived_public_key_compressed": pub}}
             else:
-                return {label: f"unrecognised format len={len(key_hex)}"}
-            priv = Ed25519PrivateKey.from_private_bytes(raw)
-            pub = priv.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw).hex()
-            return {label: {"raw_private_first8": raw[:8].hex(), "derived_public_key": pub}}
+                from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+                from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+                raw = _hex_to_raw32(key_hex)
+                priv = Ed25519PrivateKey.from_private_bytes(raw)
+                pub = priv.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw).hex()
+                return {label: {"type": "ed25519", "raw_private_first8": raw[:8].hex(), "derived_public_key": pub}}
         except Exception as e:
             return {label: f"error: {e}"}
 
