@@ -318,6 +318,9 @@ async def create_verification(
         hcs_sequence_number = None
         hcs_timestamp = None
         
+        # Generate verification_id here so it's available for HCS logging
+        verification_id = uuid.uuid4()
+        
         if hcs_topic_id and hcs_topic_id != "0.0.xxxxx":
             try:
                 logger.info(f"Logging verification to HCS topic {hcs_topic_id}")
@@ -341,8 +344,6 @@ async def create_verification(
             logger.warning(f"HCS topic not configured for country {country_code}, skipping blockchain logging")
         
         # Step 10: Save verification to database
-        verification_id = uuid.uuid4()
-        
         insert_query = text("""
             INSERT INTO verifications (
                 id, user_id, meter_id, reading_value, previous_reading, consumption_kwh,

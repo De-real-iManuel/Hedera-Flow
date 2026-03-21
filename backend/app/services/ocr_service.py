@@ -63,22 +63,29 @@ class OCRService:
     def _setup_client(self):
         """Setup Vision API client with credentials"""
         try:
-            # Initialize Vision API client
-            # Credentials are loaded from GOOGLE_APPLICATION_CREDENTIALS env var
-            self.client = vision.ImageAnnotatorClient()
-            self.is_available = True
-            
-            logger.info("Google Cloud Vision API client initialized")
-            
-            if settings.google_application_credentials:
-                logger.info(f"Using credentials from: {settings.google_application_credentials}")
+            import os, json as _json
+            creds_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
+            if creds_json:
+                # Railway / production: credentials passed as JSON string env var
+                from google.oauth2 import service_account
+                info = _json.loads(creds_json)
+                credentials = service_account.Credentials.from_service_account_info(
+                    info,
+                    scopes=["https://www.googleapis.com/auth/cloud-platform"],
+                )
+                self.client = vision.ImageAnnotatorClient(credentials=credentials)
+                logger.info("Google Cloud Vision API client initialized from GOOGLE_CREDENTIALS_JSON")
             else:
-                logger.warning("GOOGLE_APPLICATION_CREDENTIALS not set - using default credentials")
-                
+                # Local dev: fall back to GOOGLE_APPLICATION_CREDENTIALS file path
+                self.client = vision.ImageAnnotatorClient()
+                if settings.google_application_credentials:
+                    logger.info(f"Using credentials from: {settings.google_application_credentials}")
+                else:
+                    logger.warning("GOOGLE_APPLICATION_CREDENTIALS not set - using default credentials")
+            self.is_available = True
         except Exception as e:
             logger.error(f"Failed to initialize Vision API client: {e}")
             self.is_available = False
-            # Don't raise - allow service to continue with degraded functionality
             logger.warning("OCR service will operate in degraded mode without Vision API")
     
     def _handle_vision_api_error(self, error: Exception) -> Dict:
