@@ -113,7 +113,7 @@ def _sign_secp256k1(body_bytes: bytes, private_key) -> bytes:
     sig_pair = _len_field(1, pub) + _len_field(2, sig_der)
     sig_map = _len_field(1, sig_pair)
     signed_tx_bytes = _len_field(1, body_bytes) + _len_field(2, sig_map)
-    return _len_field(4, signed_tx_bytes)
+    return _len_field(5, signed_tx_bytes)
 
 
 
@@ -176,8 +176,9 @@ def _build_account_id(shard: int, realm: int, num: int) -> bytes:
 def _build_transaction_id(account_id: str, secs: int, nanos: int) -> bytes:
     parts = account_id.split(".")
     acct = _build_account_id(int(parts[0]), int(parts[1]), int(parts[2]))
+    # Hedera TransactionID proto: field 1=transactionValidStart (Timestamp), field 2=accountID
     ts = _i64_field(1, secs) + _i64_field(2, nanos)
-    return _len_field(1, acct) + _len_field(2, ts)
+    return _len_field(1, ts) + _len_field(2, acct)
 
 
 def _build_transaction_body(
@@ -191,7 +192,7 @@ def _build_transaction_body(
     body += _u64_field(3, fee)
     body += _len_field(4, _i64_field(1, duration))
     if memo:
-        body += _len_field(9, memo.encode("utf-8"))
+        body += _len_field(6, memo.encode("utf-8"))
     body += _len_field(inner_field, inner)
     return body
 
@@ -278,8 +279,8 @@ def _sign_and_wrap(body_bytes: bytes, private_key) -> bytes:
     sig_map = _len_field(1, sig_pair)
     # SignedTransaction: field 1=bodyBytes, field 2=sigMap
     signed_tx_bytes = _len_field(1, body_bytes) + _len_field(2, sig_map)
-    # Transaction: field 4=signedTransactionBytes (bytes of serialized SignedTransaction)
-    return _len_field(4, signed_tx_bytes)
+    # Transaction: field 5=signedTransactionBytes (bytes of serialized SignedTransaction)
+    return _len_field(5, signed_tx_bytes)
 
 
 # ---------------------------------------------------------------------------
@@ -398,7 +399,7 @@ class HederaService:
             memo="HederaFlow custodial account",
             fee=200_000_000, duration=120,
             secs=secs, nanos=nanos,
-            inner_field=16, inner=inner,
+            inner_field=11, inner=inner,
         )
         tx_bytes = _sign_body(body, self._operator_key_raw)
         _submit_grpc(tx_bytes, "/proto.CryptoService/createAccount")
@@ -482,7 +483,7 @@ class HederaService:
                 payer=self._operator_id, node=node,
                 memo="HederaFlow HCS", fee=100_000_000, duration=120,
                 secs=secs, nanos=nanos,
-                inner_field=24, inner=inner,
+                inner_field=27, inner=inner,
             )
             tx_bytes = _sign_body(body, self._operator_key_raw)
             _submit_grpc(tx_bytes, "/proto.ConsensusService/submitMessage")
