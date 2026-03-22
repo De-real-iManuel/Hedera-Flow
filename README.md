@@ -14,6 +14,15 @@
 
 ---
 
+## 📚 Documentation
+
+| Document | Description |
+|----------|-------------|
+| [📋 PRD](docs/PRD.md) | Product Requirements Document — goals, user stories, success metrics |
+| [🏛️ Architecture](docs/ARCHITECTURE.md) | System design, component breakdown, and technical decisions |
+
+---
+
 ## 🎯 What Is Hedera Flow?
 
 Hedera Flow lets people **pay their electricity bills using HBAR or USDC** — with every meter reading verified on the Hedera blockchain so neither the utility company nor the customer can dispute it.
