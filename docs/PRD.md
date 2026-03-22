@@ -175,7 +175,7 @@ This system cannot work on Web2 alone because utilities control the database —
 
 | Member | Role | Key Responsibilities |
 |--------|------|---------------------|
-| EMMANUEL NWAJARI | Full-stack Dev | Product, backend, frontend, infra |
+| EMMANUEL OKECHUKWU NWAJARI (De real iManuel)| Full-stack Dev | Product, backend, frontend, infra |
 
 ### Design Decisions
 
