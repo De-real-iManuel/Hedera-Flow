@@ -1,15 +1,11 @@
 """
-Smart Meter Service for Hedera Flow MVP
+Smart Meter Service — KMS-backed cryptographic operations
 
-Implements smart meter cryptographic signature functionality:
-- ED25519 keypair generation for meters
-- Private key encryption (AES-256) and secure storage
-- Consumption data signing with meter private key
-- Signature verification with public key
-- Fraud detection for invalid signatures
+Key generation and signing are delegated to AWS KMS (HSM).
+Private keys never touch application memory or the database.
+Falls back to local ED25519 AES-256 when KMS is unavailable.
 
 Requirements: FR-9.1 to FR-9.12, US-16, US-17
-Spec: prepaid-smart-meter-mvp
 """
 from typing import Dict, Any, Optional
 from datetime import datetime
@@ -18,12 +14,9 @@ from sqlalchemy import text
 import logging
 import uuid
 import os
-import hashlib
 
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.hazmat.primitives import serialization, hashes
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.primitives import padding as sym_padding
 from cryptography.hazmat.backends import default_backend
 import base64
 
@@ -35,541 +28,322 @@ class SmartMeterError(Exception):
     pass
 
 
+# ---------------------------------------------------------------------------
+# In-memory simulator state (per-process, keyed by meter_id)
+# ---------------------------------------------------------------------------
+_simulator_state: Dict[str, Dict[str, Any]] = {}
+
+
 class SmartMeterService:
-    """Service for smart meter cryptographic operations"""
-    
+    """Service for smart meter cryptographic operations (KMS-first)"""
+
     def __init__(self, db: Session):
-        """
-        Initialize smart meter service
-        
-        Args:
-            db: Database session
-        """
         self.db = db
-        self._setup_encryption()
-    
-    def _setup_encryption(self):
-        """
-        Setup AES-256 encryption key for private key storage.
-        
-        Uses environment variable METER_KEY_ENCRYPTION_KEY or generates one.
-        In production, this should be stored in a secure key management system.
-        
-        The encryption key must be 32 bytes (256 bits) for AES-256.
-        
-        Requirements: FR-9.2 (Private key encryption with AES-256)
-        """
+        self._kms = None
+        self._kms_available = False
+        self._setup_kms()
+
+    # ------------------------------------------------------------------
+    # KMS setup
+    # ------------------------------------------------------------------
+
+    def _setup_kms(self):
         try:
-            # Get encryption key from environment
-            encryption_key = os.getenv('METER_KEY_ENCRYPTION_KEY')
-            
-            if not encryption_key:
-                logger.warning(
-                    "METER_KEY_ENCRYPTION_KEY not set in environment. "
-                    "Generating temporary key (NOT SUITABLE FOR PRODUCTION)"
-                )
-                # Generate a 32-byte (256-bit) key for AES-256
-                encryption_key = base64.b64encode(os.urandom(32)).decode()
-                logger.warning(f"Temporary encryption key: {encryption_key}")
-            
-            # Decode base64 key to bytes
-            if isinstance(encryption_key, str):
-                try:
-                    self.encryption_key = base64.b64decode(encryption_key)
-                except Exception:
-                    # If not base64, use the string directly (hash it to 32 bytes)
-                    self.encryption_key = hashlib.sha256(encryption_key.encode()).digest()
+            from app.services.aws_kms_service import get_kms_service
+            svc = get_kms_service()
+            if svc.is_available:
+                self._kms = svc
+                self._kms_available = True
+                logger.info("✅ SmartMeterService: KMS available — HSM signing enabled")
             else:
-                self.encryption_key = encryption_key
-            
-            # Verify key length (must be 32 bytes for AES-256)
-            if len(self.encryption_key) != 32:
-                raise ValueError(f"Encryption key must be 32 bytes for AES-256, got {len(self.encryption_key)}")
-            
-            logger.info("AES-256 encryption setup complete for smart meter keys")
-            
+                logger.warning("⚠️  SmartMeterService: KMS unavailable — falling back to local AES-256")
         except Exception as e:
-            logger.error(f"Failed to setup encryption: {e}", exc_info=True)
-            raise SmartMeterError(f"Failed to setup encryption: {str(e)}")
-    
-    def _encrypt_private_key(self, private_key_pem: bytes) -> tuple[str, str]:
-        """
-        Encrypt private key using AES-256-CBC.
-        
-        Args:
-            private_key_pem: PEM-encoded private key bytes
-        
-        Returns:
-            Tuple of (encrypted_data_base64, iv_base64)
-        
-        Requirements: FR-9.2 (AES-256 encryption)
-        """
+            logger.warning(f"⚠️  SmartMeterService: KMS init error ({e}) — falling back to local AES-256")
+
+    # ------------------------------------------------------------------
+    # Local AES-256 fallback helpers (only used when KMS is unavailable)
+    # ------------------------------------------------------------------
+
+    def _get_local_encryption_key(self) -> bytes:
+        import hashlib
+        raw = os.getenv("METER_KEY_ENCRYPTION_KEY", "")
+        if not raw:
+            raise SmartMeterError("METER_KEY_ENCRYPTION_KEY not set and KMS is unavailable")
         try:
-            # Generate random IV (16 bytes for AES)
-            iv = os.urandom(16)
-            
-            # Create AES-256-CBC cipher
-            cipher = Cipher(
-                algorithms.AES(self.encryption_key),
-                modes.CBC(iv),
-                backend=default_backend()
-            )
-            encryptor = cipher.encryptor()
-            
-            # Apply PKCS7 padding
-            padder = sym_padding.PKCS7(128).padder()
-            padded_data = padder.update(private_key_pem) + padder.finalize()
-            
-            # Encrypt
-            encrypted_data = encryptor.update(padded_data) + encryptor.finalize()
-            
-            # Encode to base64 for storage
-            encrypted_b64 = base64.b64encode(encrypted_data).decode('utf-8')
-            iv_b64 = base64.b64encode(iv).decode('utf-8')
-            
-            return encrypted_b64, iv_b64
-            
-        except Exception as e:
-            logger.error(f"Failed to encrypt private key: {e}", exc_info=True)
-            raise SmartMeterError(f"Failed to encrypt private key: {str(e)}")
-    
-    def _decrypt_private_key(self, encrypted_data_b64: str, iv_b64: str) -> bytes:
-        """
-        Decrypt private key using AES-256-CBC.
-        
-        Args:
-            encrypted_data_b64: Base64-encoded encrypted data
-            iv_b64: Base64-encoded initialization vector
-        
-        Returns:
-            Decrypted PEM-encoded private key bytes
-        
-        Requirements: FR-9.2 (AES-256 decryption)
-        """
-        try:
-            # Decode from base64
-            encrypted_data = base64.b64decode(encrypted_data_b64)
-            iv = base64.b64decode(iv_b64)
-            
-            # Create AES-256-CBC cipher
-            cipher = Cipher(
-                algorithms.AES(self.encryption_key),
-                modes.CBC(iv),
-                backend=default_backend()
-            )
-            decryptor = cipher.decryptor()
-            
-            # Decrypt
-            padded_data = decryptor.update(encrypted_data) + decryptor.finalize()
-            
-            # Remove PKCS7 padding
-            unpadder = sym_padding.PKCS7(128).unpadder()
-            private_key_pem = unpadder.update(padded_data) + unpadder.finalize()
-            
-            return private_key_pem
-            
-        except Exception as e:
-            logger.error(f"Failed to decrypt private key: {e}", exc_info=True)
-            raise SmartMeterError(f"Failed to decrypt private key: {str(e)}")
-    
+            key = base64.b64decode(raw)
+        except Exception:
+            key = hashlib.sha256(raw.encode()).digest()
+        if len(key) != 32:
+            raise SmartMeterError("METER_KEY_ENCRYPTION_KEY must decode to 32 bytes")
+        return key
+
+    def _encrypt_private_key(self, private_pem: bytes) -> tuple[str, str]:
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+        from cryptography.hazmat.primitives import padding as sym_padding
+        key = self._get_local_encryption_key()
+        iv = os.urandom(16)
+        cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
+        enc = cipher.encryptor()
+        padder = sym_padding.PKCS7(128).padder()
+        padded = padder.update(private_pem) + padder.finalize()
+        encrypted = enc.update(padded) + enc.finalize()
+        return base64.b64encode(encrypted).decode(), base64.b64encode(iv).decode()
+
+    def _decrypt_private_key(self, encrypted_b64: str, iv_b64: str) -> bytes:
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+        from cryptography.hazmat.primitives import padding as sym_padding
+        key = self._get_local_encryption_key()
+        encrypted = base64.b64decode(encrypted_b64)
+        iv = base64.b64decode(iv_b64)
+        cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
+        dec = cipher.decryptor()
+        padded = dec.update(encrypted) + dec.finalize()
+        unpadder = sym_padding.PKCS7(128).unpadder()
+        return unpadder.update(padded) + unpadder.finalize()
+
+    # ------------------------------------------------------------------
+    # Keypair generation
+    # ------------------------------------------------------------------
+
     def generate_keypair(self, meter_id: str) -> Dict[str, Any]:
         """
-        Generate ED25519 keypair for a smart meter.
-        
-        Creates a new keypair, encrypts the private key, and stores both
-        in the database. The public key is stored in plaintext for verification.
-        
-        Args:
-            meter_id: Meter UUID
-        
-        Returns:
-            Dictionary containing:
-                - meter_id: Meter UUID
-                - public_key: PEM-encoded public key
-                - algorithm: Signature algorithm (ED25519)
-                - created_at: Timestamp
-        
-        Raises:
-            SmartMeterError: If keypair generation fails
-        
-        Requirements: FR-9.1, FR-9.2, FR-9.3, Task 2.2
+        Generate a keypair for a meter.
+        - KMS available: creates an asymmetric KMS key; no private key stored in DB.
+        - KMS unavailable: generates local ED25519, stores AES-256 encrypted in DB.
         """
         try:
-            logger.info(f"Generating ED25519 keypair for meter {meter_id}")
-            
-            # Check if keypair already exists
-            check_query = text("""
-                SELECT id FROM smart_meter_keys
-                WHERE meter_id = :meter_id
-            """)
-            existing = self.db.execute(check_query, {'meter_id': meter_id}).fetchone()
-            
-            if existing:
-                raise SmartMeterError(
-                    f"Keypair already exists for meter {meter_id}. "
-                    "Use get_public_key() to retrieve it."
-                )
-            
-            # Generate ED25519 keypair
-            private_key = ed25519.Ed25519PrivateKey.generate()
-            public_key = private_key.public_key()
-            
-            # Serialize private key to PEM format
-            private_pem = private_key.private_bytes(
-                encoding=serialization.Encoding.PEM,
-                format=serialization.PrivateFormat.PKCS8,
-                encryption_algorithm=serialization.NoEncryption()
-            )
-            
-            # Serialize public key to PEM format
-            public_pem = public_key.public_bytes(
-                encoding=serialization.Encoding.PEM,
-                format=serialization.PublicFormat.SubjectPublicKeyInfo
-            )
-            
-            # Encrypt private key with AES-256-CBC
-            encrypted_private, encryption_iv = self._encrypt_private_key(private_pem)
-            
-            # Store in database
+            check = self.db.execute(
+                text("SELECT id FROM smart_meter_keys WHERE meter_id = :m"),
+                {"m": meter_id}
+            ).fetchone()
+            if check:
+                raise SmartMeterError(f"Keypair already exists for meter {meter_id}")
+
             created_at = datetime.utcnow()
-            insert_query = text("""
-                INSERT INTO smart_meter_keys (
-                    id, meter_id, public_key, private_key_encrypted,
-                    encryption_iv, algorithm, created_at
-                ) VALUES (
-                    :id, :meter_id, :public_key, :private_key_encrypted,
-                    :encryption_iv, :algorithm, :created_at
-                )
-            """)
-            
-            params = {
-                'id': str(uuid.uuid4()),
-                'meter_id': meter_id,
-                'public_key': public_pem.decode('utf-8'),
-                'private_key_encrypted': encrypted_private,
-                'encryption_iv': encryption_iv,
-                'algorithm': 'ED25519',
-                'created_at': created_at
-            }
-            
-            self.db.execute(insert_query, params)
-            self.db.commit()
-            
-            logger.info(f"✅ Generated and stored keypair for meter {meter_id}")
-            logger.info(f"   Algorithm: ED25519")
-            logger.info(f"   Public key length: {len(public_pem)} bytes")
-            logger.info(f"   Private key encrypted: Yes")
-            
-            return {
-                'meter_id': meter_id,
-                'public_key': public_pem.decode('utf-8'),
-                'algorithm': 'ED25519',
-                'created_at': created_at.isoformat()
-            }
-            
+
+            if self._kms_available:
+                return self._generate_keypair_kms(meter_id, created_at)
+            else:
+                return self._generate_keypair_local(meter_id, created_at)
+
         except SmartMeterError:
             self.db.rollback()
             raise
         except Exception as e:
             self.db.rollback()
-            logger.error(f"Failed to generate keypair: {e}", exc_info=True)
-            raise SmartMeterError(f"Failed to generate keypair: {str(e)}")
-    
+            logger.error(f"generate_keypair failed: {e}", exc_info=True)
+            raise SmartMeterError(f"Failed to generate keypair: {e}")
+
+    def _generate_keypair_kms(self, meter_id: str, created_at: datetime) -> Dict[str, Any]:
+        result = self._kms.create_meter_key(meter_id)
+        kms_key_id = result["key_id"]
+        public_key_hex = result["public_key"]
+
+        self.db.execute(text("""
+            INSERT INTO smart_meter_keys
+                (id, meter_id, public_key, kms_key_id, algorithm, created_at)
+            VALUES
+                (:id, :meter_id, :public_key, :kms_key_id, :algorithm, :created_at)
+        """), {
+            "id": str(uuid.uuid4()),
+            "meter_id": meter_id,
+            "public_key": public_key_hex,
+            "kms_key_id": kms_key_id,
+            "algorithm": "ECDSA_SHA_256",
+            "created_at": created_at,
+        })
+        self.db.commit()
+        logger.info(f"✅ KMS keypair created for meter {meter_id} — key {kms_key_id}")
+        return {
+            "meter_id": meter_id,
+            "public_key": public_key_hex,
+            "algorithm": "ECDSA_SHA_256",
+            "kms_key_id": kms_key_id,
+            "created_at": created_at.isoformat(),
+        }
+
+    def _generate_keypair_local(self, meter_id: str, created_at: datetime) -> Dict[str, Any]:
+        private_key = ed25519.Ed25519PrivateKey.generate()
+        public_key = private_key.public_key()
+        private_pem = private_key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption()
+        )
+        public_pem = public_key.public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo
+        ).decode()
+        encrypted_private, iv = self._encrypt_private_key(private_pem)
+
+        self.db.execute(text("""
+            INSERT INTO smart_meter_keys
+                (id, meter_id, public_key, private_key_encrypted, encryption_iv, algorithm, created_at)
+            VALUES
+                (:id, :meter_id, :public_key, :private_key_encrypted, :encryption_iv, :algorithm, :created_at)
+        """), {
+            "id": str(uuid.uuid4()),
+            "meter_id": meter_id,
+            "public_key": public_pem,
+            "private_key_encrypted": encrypted_private,
+            "encryption_iv": iv,
+            "algorithm": "ED25519",
+            "created_at": created_at,
+        })
+        self.db.commit()
+        logger.info(f"✅ Local ED25519 keypair created for meter {meter_id}")
+        return {
+            "meter_id": meter_id,
+            "public_key": public_pem,
+            "algorithm": "ED25519",
+            "created_at": created_at.isoformat(),
+        }
+
+    # ------------------------------------------------------------------
+    # Public key retrieval
+    # ------------------------------------------------------------------
+
     def get_public_key(self, meter_id: str) -> Optional[str]:
-        """
-        Get public key for a meter.
-        
-        Args:
-            meter_id: Meter UUID
-        
-        Returns:
-            PEM-encoded public key or None if not found
-        
-        Requirements: FR-9.3
-        """
-        try:
-            query = text("""
-                SELECT public_key FROM smart_meter_keys
-                WHERE meter_id = :meter_id
-            """)
-            
-            result = self.db.execute(query, {'meter_id': meter_id}).fetchone()
-            
-            if result:
-                return result[0]
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"Failed to get public key: {e}", exc_info=True)
-            raise SmartMeterError(f"Failed to get public key: {str(e)}")
-    
-    def _get_private_key(self, meter_id: str) -> ed25519.Ed25519PrivateKey:
-        """
-        Retrieve and decrypt private key for a meter.
-        
-        INTERNAL USE ONLY - Private keys should never be exposed via API.
-        
-        Args:
-            meter_id: Meter UUID
-        
-        Returns:
-            Decrypted ED25519 private key object
-        
-        Raises:
-            SmartMeterError: If key not found or decryption fails
-        
-        Requirements: FR-9.2, NFR-8.2
-        """
-        try:
-            query = text("""
-                SELECT private_key_encrypted, encryption_iv FROM smart_meter_keys
-                WHERE meter_id = :meter_id
-            """)
-            
-            result = self.db.execute(query, {'meter_id': meter_id}).fetchone()
-            
-            if not result:
-                raise SmartMeterError(f"No keypair found for meter {meter_id}")
-            
-            # Decrypt private key using AES-256
-            encrypted_private = result[0]
-            encryption_iv = result[1]
-            private_pem = self._decrypt_private_key(encrypted_private, encryption_iv)
-            
-            # Load private key object
-            private_key = serialization.load_pem_private_key(
-                private_pem,
-                password=None,
-                backend=default_backend()
-            )
-            
-            # Update last_used_at timestamp
-            update_query = text("""
-                UPDATE smart_meter_keys
-                SET last_used_at = NOW()
-                WHERE meter_id = :meter_id
-            """)
-            self.db.execute(update_query, {'meter_id': meter_id})
-            self.db.commit()
-            
-            return private_key
-            
-        except SmartMeterError:
-            raise
-        except Exception as e:
-            logger.error(f"Failed to retrieve private key: {e}", exc_info=True)
-            raise SmartMeterError(f"Failed to retrieve private key: {str(e)}")
-    
+        row = self.db.execute(
+            text("SELECT public_key FROM smart_meter_keys WHERE meter_id = :m"),
+            {"m": meter_id}
+        ).fetchone()
+        return row[0] if row else None
+
+    def keypair_exists(self, meter_id: str) -> bool:
+        row = self.db.execute(
+            text("SELECT COUNT(*) FROM smart_meter_keys WHERE meter_id = :m"),
+            {"m": meter_id}
+        ).fetchone()
+        return row[0] > 0
+
+    # ------------------------------------------------------------------
+    # Signing
+    # ------------------------------------------------------------------
+
     def sign_consumption(
         self,
         meter_id: str,
         consumption_kwh: float,
         timestamp: int,
         reading_before: Optional[float] = None,
-        reading_after: Optional[float] = None
+        reading_after: Optional[float] = None,
     ) -> Dict[str, Any]:
-        """
-        Sign consumption data with meter's private key.
-        
-        Creates a deterministic message from consumption data, hashes it with SHA-256,
-        and signs the hash with the meter's ED25519 private key.
-        
-        Message format: meter_id + consumption_kwh + timestamp
-        
-        Args:
-            meter_id: Meter UUID
-            consumption_kwh: Consumption amount in kWh
-            timestamp: Unix timestamp of consumption
-            reading_before: Optional meter reading before consumption
-            reading_after: Optional meter reading after consumption
-        
-        Returns:
-            Dictionary containing:
-                - meter_id: Meter UUID
-                - consumption_kwh: Consumption amount
-                - timestamp: Unix timestamp
-                - reading_before: Meter reading before (if provided)
-                - reading_after: Meter reading after (if provided)
-                - signature: Hex-encoded signature
-                - public_key: PEM-encoded public key
-                - message_hash: SHA-256 hash of message (hex)
-        
-        Raises:
-            SmartMeterError: If signing fails
-        
-        Requirements: FR-9.4, FR-9.5, Task 2.3
-        """
-        try:
-            logger.info(f"Signing consumption data for meter {meter_id}")
-            
-            # Get private key
-            private_key = self._get_private_key(meter_id)
-            
-            # Get public key
-            public_key_pem = self.get_public_key(meter_id)
-            
-            # Create message to sign (deterministic format)
-            message = f"{meter_id}{consumption_kwh}{timestamp}"
-            message_bytes = message.encode('utf-8')
-            
-            # Hash message with SHA-256
-            digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
-            digest.update(message_bytes)
-            message_hash = digest.finalize()
-            
-            # Sign the hash
-            signature = private_key.sign(message_bytes)
-            
-            # Convert to hex for storage/transmission
-            signature_hex = signature.hex()
-            message_hash_hex = message_hash.hex()
-            
-            logger.info(f"✅ Signed consumption data for meter {meter_id}")
-            logger.info(f"   Consumption: {consumption_kwh} kWh")
-            logger.info(f"   Timestamp: {timestamp}")
-            logger.info(f"   Message hash: {message_hash_hex[:16]}...")
-            logger.info(f"   Signature: {signature_hex[:16]}...")
-            
-            return {
-                'meter_id': meter_id,
-                'consumption_kwh': consumption_kwh,
-                'timestamp': timestamp,
-                'reading_before': reading_before,
-                'reading_after': reading_after,
-                'signature': signature_hex,
-                'public_key': public_key_pem,
-                'message_hash': message_hash_hex
-            }
-            
-        except SmartMeterError:
-            raise
-        except Exception as e:
-            logger.error(f"Failed to sign consumption data: {e}", exc_info=True)
-            raise SmartMeterError(f"Failed to sign consumption data: {str(e)}")
-    
+        """Sign consumption data. Uses KMS if available, else local ED25519."""
+        row = self.db.execute(
+            text("SELECT kms_key_id, private_key_encrypted, encryption_iv, public_key FROM smart_meter_keys WHERE meter_id = :m"),
+            {"m": meter_id}
+        ).fetchone()
+        if not row:
+            raise SmartMeterError(f"No keypair found for meter {meter_id}")
+
+        kms_key_id, encrypted_private, iv, public_key_pem = row
+
+        if self._kms_available and kms_key_id:
+            return self._sign_kms(meter_id, kms_key_id, public_key_pem, consumption_kwh, timestamp, reading_before, reading_after)
+        else:
+            return self._sign_local(meter_id, encrypted_private, iv, public_key_pem, consumption_kwh, timestamp, reading_before, reading_after)
+
+    def _sign_kms(self, meter_id, kms_key_id, public_key_pem, consumption_kwh, timestamp, reading_before, reading_after):
+        import json, hashlib
+        data = {"meter_id": meter_id, "consumption_kwh": consumption_kwh, "timestamp": timestamp}
+        result = self._kms.sign_consumption_data(kms_key_id, data, meter_id)
+        # Update last_used_at
+        self.db.execute(text("UPDATE smart_meter_keys SET last_used_at = NOW() WHERE meter_id = :m"), {"m": meter_id})
+        self.db.commit()
+        return {
+            "meter_id": meter_id,
+            "consumption_kwh": consumption_kwh,
+            "timestamp": timestamp,
+            "reading_before": reading_before,
+            "reading_after": reading_after,
+            "signature": result["signature"],
+            "public_key": public_key_pem,
+            "message_hash": result["message_hash"],
+        }
+
+    def _sign_local(self, meter_id, encrypted_private, iv, public_key_pem, consumption_kwh, timestamp, reading_before, reading_after):
+        import hashlib
+        private_pem = self._decrypt_private_key(encrypted_private, iv)
+        private_key = serialization.load_pem_private_key(private_pem, password=None, backend=default_backend())
+        message = f"{meter_id}{consumption_kwh}{timestamp}".encode()
+        digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
+        digest.update(message)
+        message_hash = digest.finalize().hex()
+        signature = private_key.sign(message).hex()
+        self.db.execute(text("UPDATE smart_meter_keys SET last_used_at = NOW() WHERE meter_id = :m"), {"m": meter_id})
+        self.db.commit()
+        return {
+            "meter_id": meter_id,
+            "consumption_kwh": consumption_kwh,
+            "timestamp": timestamp,
+            "reading_before": reading_before,
+            "reading_after": reading_after,
+            "signature": signature,
+            "public_key": public_key_pem,
+            "message_hash": message_hash,
+        }
+
+    # ------------------------------------------------------------------
+    # Verification
+    # ------------------------------------------------------------------
+
     def verify_signature(
         self,
         meter_id: str,
         consumption_kwh: float,
         timestamp: int,
         signature: str,
-        public_key_pem: Optional[str] = None
+        public_key_pem: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """
-        Verify consumption data signature.
-        
-        Reconstructs the message from consumption data, and verifies the signature
-        using the meter's public key. Uses constant-time comparison for security.
-        
-        Args:
-            meter_id: Meter UUID
-            consumption_kwh: Consumption amount in kWh
-            timestamp: Unix timestamp of consumption
-            signature: Hex-encoded signature to verify
-            public_key_pem: Optional PEM-encoded public key (fetched if not provided)
-        
-        Returns:
-            Dictionary containing:
-                - valid: Boolean indicating if signature is valid
-                - meter_id: Meter UUID
-                - consumption_kwh: Consumption amount
-                - timestamp: Unix timestamp
-                - message_hash: SHA-256 hash of message (hex)
-                - algorithm: Signature algorithm (ED25519)
-        
-        Raises:
-            SmartMeterError: If verification process fails (not if signature is invalid)
-        
-        Requirements: FR-9.6, FR-9.7, NFR-8.3, Task 2.4
-        """
-        try:
-            logger.info(f"Verifying signature for meter {meter_id}")
-            
-            # Get public key if not provided
-            if public_key_pem is None:
-                public_key_pem = self.get_public_key(meter_id)
-                if not public_key_pem:
-                    raise SmartMeterError(f"No public key found for meter {meter_id}")
-            
-            # Load public key
-            public_key = serialization.load_pem_public_key(
-                public_key_pem.encode('utf-8'),
-                backend=default_backend()
-            )
-            
-            # Reconstruct message (same format as signing)
-            message = f"{meter_id}{consumption_kwh}{timestamp}"
-            message_bytes = message.encode('utf-8')
-            
-            # Hash message with SHA-256
-            digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
-            digest.update(message_bytes)
-            message_hash = digest.finalize()
-            message_hash_hex = message_hash.hex()
-            
-            # Decode hex signature
-            try:
-                signature_bytes = bytes.fromhex(signature)
-            except ValueError:
-                logger.warning(f"Invalid signature format for meter {meter_id}")
-                return {
-                    'valid': False,
-                    'meter_id': meter_id,
-                    'consumption_kwh': consumption_kwh,
-                    'timestamp': timestamp,
-                    'message_hash': message_hash_hex,
-                    'algorithm': 'ED25519',
-                    'error': 'Invalid signature format'
-                }
-            
-            # Verify signature (constant-time comparison)
-            try:
-                public_key.verify(signature_bytes, message_bytes)
-                is_valid = True
-                logger.info(f"✅ Signature VALID for meter {meter_id}")
-            except Exception as verify_error:
-                is_valid = False
-                logger.warning(f"❌ Signature INVALID for meter {meter_id}: {verify_error}")
-            
-            return {
-                'valid': is_valid,
-                'meter_id': meter_id,
-                'consumption_kwh': consumption_kwh,
-                'timestamp': timestamp,
-                'message_hash': message_hash_hex,
-                'algorithm': 'ED25519'
-            }
-            
-        except SmartMeterError:
-            raise
-        except Exception as e:
-            logger.error(f"Failed to verify signature: {e}", exc_info=True)
-            raise SmartMeterError(f"Failed to verify signature: {str(e)}")
-    
-    def keypair_exists(self, meter_id: str) -> bool:
-        """
-        Check if a keypair exists for a meter.
-        
-        Args:
-            meter_id: Meter UUID
-        
-        Returns:
-            True if keypair exists, False otherwise
-        """
-        try:
-            query = text("""
-                SELECT COUNT(*) FROM smart_meter_keys
-                WHERE meter_id = :meter_id
-            """)
-            
-            result = self.db.execute(query, {'meter_id': meter_id}).fetchone()
-            return result[0] > 0
-            
-        except Exception as e:
-            logger.error(f"Failed to check keypair existence: {e}", exc_info=True)
-            return False
+        if public_key_pem is None:
+            public_key_pem = self.get_public_key(meter_id)
+            if not public_key_pem:
+                raise SmartMeterError(f"No public key found for meter {meter_id}")
 
+        # Determine algorithm from DB
+        row = self.db.execute(
+            text("SELECT kms_key_id, algorithm FROM smart_meter_keys WHERE meter_id = :m"),
+            {"m": meter_id}
+        ).fetchone()
+        kms_key_id = row[0] if row else None
+        algorithm = row[1] if row else "ED25519"
+
+        message = f"{meter_id}{consumption_kwh}{timestamp}".encode()
+        digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
+        digest.update(message)
+        message_hash_hex = digest.finalize().hex()
+
+        try:
+            sig_bytes = bytes.fromhex(signature)
+        except ValueError:
+            return {"valid": False, "meter_id": meter_id, "consumption_kwh": consumption_kwh,
+                    "timestamp": timestamp, "message_hash": message_hash_hex, "algorithm": algorithm,
+                    "error": "Invalid signature format"}
+
+        is_valid = False
+        if self._kms_available and kms_key_id:
+            is_valid = self._kms.verify_signature(kms_key_id, message, sig_bytes)
+        else:
+            try:
+                pub = serialization.load_pem_public_key(public_key_pem.encode(), backend=default_backend())
+                pub.verify(sig_bytes, message)
+                is_valid = True
+            except Exception:
+                is_valid = False
+
+        return {
+            "valid": is_valid,
+            "meter_id": meter_id,
+            "consumption_kwh": consumption_kwh,
+            "timestamp": timestamp,
+            "message_hash": message_hash_hex,
+            "algorithm": algorithm,
+        }
+
+    # ------------------------------------------------------------------
+    # Consumption logging (sign + verify + store + HCS)
+    # ------------------------------------------------------------------
 
     def log_consumption(
         self,
@@ -579,288 +353,172 @@ class SmartMeterService:
         signature: str,
         public_key_pem: str,
         reading_before: Optional[float] = None,
-        reading_after: Optional[float] = None
+        reading_after: Optional[float] = None,
     ) -> Dict[str, Any]:
-        """
-        Log consumption data with signature verification and token deduction.
+        verification = self.verify_signature(meter_id, consumption_kwh, timestamp, signature, public_key_pem)
+        if not verification["valid"]:
+            raise SmartMeterError(f"Invalid signature for meter {meter_id} — consumption rejected")
 
-        This method:
-        1. Verifies the signature before accepting consumption data
-        2. Deducts units from prepaid tokens (if exists) using FIFO logic
-        3. Updates token balance in database
-        4. Stores consumption log in database
-        5. Logs to HCS with type SMART_METER_CONSUMPTION
-
-        Args:
-            meter_id: Meter UUID
-            consumption_kwh: Consumption amount in kWh
-            timestamp: Unix timestamp of consumption
-            signature: Hex-encoded signature
-            public_key_pem: PEM-encoded public key
-            reading_before: Optional meter reading before consumption
-            reading_after: Optional meter reading after consumption
-
-        Returns:
-            Dictionary containing:
-                - consumption_log_id: UUID of created consumption log
-                - meter_id: Meter UUID
-                - consumption_kwh: Consumption amount
-                - signature_valid: Boolean indicating if signature is valid
-                - token_deduction: Token deduction details (if applicable)
-                - hcs_sequence_number: HCS log sequence number
-
-        Raises:
-            SmartMeterError: If signature is invalid or logging fails
-
-        Requirements: FR-9.6, FR-9.7, FR-9.8, FR-9.9, US-16, Task 2.5
-        """
+        # Token deduction (best-effort)
+        token_deduction = None
+        units_deducted = None
+        units_remaining = None
+        token_id_used = None
         try:
-            logger.info(f"Logging consumption for meter {meter_id}: {consumption_kwh} kWh")
-
-            # Step 1: Verify signature before accepting
-            verification_result = self.verify_signature(
-                meter_id=meter_id,
-                consumption_kwh=consumption_kwh,
-                timestamp=timestamp,
-                signature=signature,
-                public_key_pem=public_key_pem
-            )
-
-            signature_valid = verification_result['valid']
-
-            # Reject invalid signatures (fraud detection)
-            if not signature_valid:
-                logger.error(f"❌ Invalid signature detected for meter {meter_id} - REJECTING consumption")
-                raise SmartMeterError(
-                    f"Invalid signature for meter {meter_id}. "
-                    "Consumption data rejected for fraud prevention."
-                )
-
-            logger.info(f"✅ Signature verified for meter {meter_id}")
-
-            # Step 2: Deduct units from prepaid token (if exists)
-            token_deduction = None
-            units_deducted = None
-            units_remaining = None
-            token_id_used = None
-
-            try:
-                # Import PrepaidTokenService
-                from app.services.prepaid_token_service import PrepaidTokenService
-
-                prepaid_service = PrepaidTokenService(self.db)
-                deduction_result = prepaid_service.deduct_units(
-                    meter_id=meter_id,
-                    consumption_kwh=consumption_kwh
-                )
-
-                if deduction_result['tokens_deducted']:
-                    # Get the first token that was deducted from
-                    first_token = deduction_result['tokens_deducted'][0]
-
-                    # Get token UUID from token_id string
-                    token_query = text("""
-                        SELECT id FROM prepaid_tokens
-                        WHERE token_id = :token_id
-                    """)
-                    token_result = self.db.execute(
-                        token_query,
-                        {'token_id': first_token['token_id']}
-                    ).fetchone()
-
-                    if token_result:
-                        token_id_used = str(token_result[0])
-
-                    units_deducted = deduction_result['total_deducted']
-                    units_remaining = first_token['remaining']
-                    token_deduction = deduction_result
-
-                    logger.info(
-                        f"💰 Deducted {units_deducted} kWh from token {first_token['token_id']}, "
-                        f"remaining: {units_remaining} kWh"
-                    )
-                else:
-                    logger.warning(f"⚠️ No active prepaid tokens found for meter {meter_id}")
-
-            except Exception as e:
-                logger.warning(f"Token deduction failed (non-critical): {e}")
-                # Continue logging even if token deduction fails
-
-            # Step 3: Store consumption log in database
-            consumption_log_id = str(uuid.uuid4())
-
-            insert_query = text("""
-                INSERT INTO consumption_logs (
-                    id, meter_id, token_id, consumption_kwh,
-                    reading_before, reading_after, timestamp,
-                    signature, public_key, signature_valid,
-                    units_deducted, units_remaining, created_at
-                ) VALUES (
-                    :id, :meter_id, :token_id, :consumption_kwh,
-                    :reading_before, :reading_after, :timestamp,
-                    :signature, :public_key, :signature_valid,
-                    :units_deducted, :units_remaining, NOW()
-                )
-            """)
-
-            self.db.execute(insert_query, {
-                'id': consumption_log_id,
-                'meter_id': meter_id,
-                'token_id': token_id_used,
-                'consumption_kwh': consumption_kwh,
-                'reading_before': reading_before,
-                'reading_after': reading_after,
-                'timestamp': timestamp,
-                'signature': signature,
-                'public_key': public_key_pem,
-                'signature_valid': signature_valid,
-                'units_deducted': units_deducted,
-                'units_remaining': units_remaining
-            })
-
-            logger.info(f"📝 Stored consumption log {consumption_log_id} in database")
-
-            # Step 4: Log to HCS (SMART_METER_CONSUMPTION)
-            # Requirements: FR-9.8, FR-9.9, Appendix A.5
-            hcs_sequence_number = None
-            hcs_topic_id = None
-
-            try:
-                # Get meter's country code to determine HCS topic
-                meter_query = text("""
-                    SELECT m.meter_id, u.country_code
-                    FROM meters m
-                    JOIN users u ON m.user_id = u.id
-                    WHERE m.id = :meter_id
-                """)
-                meter_result = self.db.execute(meter_query, {'meter_id': meter_id}).fetchone()
-
-                if meter_result:
-                    meter_number = meter_result[0]
-                    country_code = meter_result[1] or 'ES'
-
-                    # Determine HCS topic based on country (regional topics)
-                    # Requirements: FR-9.8 (Log to appropriate regional topic)
-                    topic_map = {
-                        'ES': os.getenv('HCS_TOPIC_EU', '0.0.8052384'),
-                        'US': os.getenv('HCS_TOPIC_US', '0.0.8052396'),
-                        'IN': os.getenv('HCS_TOPIC_ASIA', '0.0.8052389'),
-                        'BR': os.getenv('HCS_TOPIC_SA', '0.0.8052390'),
-                        'NG': os.getenv('HCS_TOPIC_AFRICA', '0.0.8052391')
-                    }
-                    hcs_topic_id = topic_map.get(country_code, topic_map['ES'])
-
-                    # Get token_id string (not UUID) for HCS message
-                    token_id_str = None
-                    if token_id_used:
-                        token_str_query = text("""
-                            SELECT token_id FROM prepaid_tokens WHERE id = :id
-                        """)
-                        token_str_result = self.db.execute(
-                            token_str_query,
-                            {'id': token_id_used}
-                        ).fetchone()
-                        if token_str_result:
-                            token_id_str = token_str_result[0]
-
-                    # Create HCS message per Appendix A.5 specification
-                    # Requirements: FR-9.9 (Include signature and verification status)
-                    import json
-
-                    hcs_message = {
-                        "type": "SMART_METER_CONSUMPTION",
-                        "meter_id": meter_number,
-                        "consumption_kwh": float(consumption_kwh),
-                        "timestamp": timestamp,
-                        "reading_before": float(reading_before) if reading_before is not None else None,
-                        "reading_after": float(reading_after) if reading_after is not None else None,
-                        "signature": signature,
-                        "public_key": public_key_pem,
-                        "signature_valid": signature_valid,
-                        "token_id": token_id_str,
-                        "units_deducted": float(units_deducted) if units_deducted is not None else None,
-                        "units_remaining": float(units_remaining) if units_remaining is not None else None
-                    }
-
-                    # Submit to HCS using pure-Python gRPC implementation
-                    from app.services.hedera_service import HederaService
-
-                    hedera_service = HederaService()
-                    hcs_result = hedera_service.log_to_hcs(hcs_topic_id, hcs_message)
-                    hcs_sequence_number = hcs_result.get("sequence_number")
-
-                    if hcs_result.get("submitted"):
-                        logger.info(
-                            f"⛓️ Logged to HCS topic {hcs_topic_id}, "
-                            f"sequence: {hcs_sequence_number}"
-                        )
-                    else:
-                        logger.warning(f"⚠️ HCS submit failed for topic {hcs_topic_id}")
-
-                    # Update consumption log with HCS details
-                    # Requirements: Store HCS sequence number in consumption_logs table
-                    if hcs_sequence_number is not None:
-                        update_query = text("""
-                            UPDATE consumption_logs
-                            SET hcs_topic_id = :hcs_topic_id,
-                                hcs_sequence_number = :hcs_sequence_number
-                            WHERE id = :id
-                        """)
-
-                        self.db.execute(update_query, {
-                            'id': consumption_log_id,
-                            'hcs_topic_id': hcs_topic_id,
-                            'hcs_sequence_number': hcs_sequence_number
-                        })
-
-                        logger.info(
-                            f"✅ HCS logging complete - Topic: {hcs_topic_id}, "
-                            f"Sequence: {hcs_sequence_number}"
-                        )
-
-            except Exception as e:
-                logger.error(f"Failed to log to HCS (non-critical): {e}")
-                # Continue even if HCS logging fails
-
-            # Commit all changes
-            self.db.commit()
-
-            logger.info(f"✅ Successfully logged consumption for meter {meter_id}")
-
-            return {
-                'consumption_log_id': consumption_log_id,
-                'meter_id': meter_id,
-                'consumption_kwh': consumption_kwh,
-                'timestamp': timestamp,
-                'signature_valid': signature_valid,
-                'token_deduction': token_deduction,
-                'units_deducted': units_deducted,
-                'units_remaining': units_remaining,
-                'hcs_topic_id': hcs_topic_id,
-                'hcs_sequence_number': hcs_sequence_number,
-                'reading_before': reading_before,
-                'reading_after': reading_after
-            }
-
-        except SmartMeterError:
-            self.db.rollback()
-            raise
+            from app.services.prepaid_token_service import PrepaidTokenService
+            prepaid = PrepaidTokenService(self.db)
+            deduction = prepaid.deduct_units(meter_id=meter_id, consumption_kwh=consumption_kwh)
+            if deduction.get("tokens_deducted"):
+                first = deduction["tokens_deducted"][0]
+                token_row = self.db.execute(
+                    text("SELECT id FROM prepaid_tokens WHERE token_id = :t"),
+                    {"t": first["token_id"]}
+                ).fetchone()
+                if token_row:
+                    token_id_used = str(token_row[0])
+                units_deducted = deduction["total_deducted"]
+                units_remaining = first["remaining"]
+                token_deduction = deduction
         except Exception as e:
-            self.db.rollback()
-            logger.error(f"Failed to log consumption: {e}", exc_info=True)
-            raise SmartMeterError(f"Failed to log consumption: {str(e)}")
+            logger.warning(f"Token deduction failed (non-critical): {e}")
 
+        # Store consumption log
+        log_id = str(uuid.uuid4())
+        self.db.execute(text("""
+            INSERT INTO consumption_logs
+                (id, meter_id, token_id, consumption_kwh, reading_before, reading_after,
+                 timestamp, signature, public_key, signature_valid,
+                 units_deducted, units_remaining, created_at)
+            VALUES
+                (:id, :meter_id, :token_id, :consumption_kwh, :reading_before, :reading_after,
+                 :timestamp, :signature, :public_key, :signature_valid,
+                 :units_deducted, :units_remaining, NOW())
+        """), {
+            "id": log_id, "meter_id": meter_id, "token_id": token_id_used,
+            "consumption_kwh": consumption_kwh, "reading_before": reading_before,
+            "reading_after": reading_after, "timestamp": timestamp,
+            "signature": signature, "public_key": public_key_pem,
+            "signature_valid": True, "units_deducted": units_deducted,
+            "units_remaining": units_remaining,
+        })
 
+        # HCS logging (best-effort)
+        hcs_sequence_number = None
+        hcs_topic_id = None
+        try:
+            meter_row = self.db.execute(text("""
+                SELECT m.meter_id, u.country_code FROM meters m
+                JOIN users u ON m.user_id = u.id WHERE m.id = :m
+            """), {"m": meter_id}).fetchone()
+            if meter_row:
+                country = meter_row[1] or "ES"
+                topic_map = {
+                    "ES": os.getenv("HCS_TOPIC_EU", "0.0.8052384"),
+                    "US": os.getenv("HCS_TOPIC_US", "0.0.8052396"),
+                    "IN": os.getenv("HCS_TOPIC_ASIA", "0.0.8052389"),
+                    "BR": os.getenv("HCS_TOPIC_SA", "0.0.8052390"),
+                    "NG": os.getenv("HCS_TOPIC_AFRICA", "0.0.8052391"),
+                }
+                hcs_topic_id = topic_map.get(country, topic_map["ES"])
+                from app.services.hedera_service import HederaService
+                hedera = HederaService()
+                import json
+                hcs_msg = json.dumps({
+                    "type": "SMART_METER_CONSUMPTION",
+                    "meter_id": meter_id,
+                    "consumption_kwh": consumption_kwh,
+                    "timestamp": timestamp,
+                    "signature_valid": True,
+                    "log_id": log_id,
+                })
+                hcs_result = hedera.submit_message(hcs_topic_id, hcs_msg)
+                hcs_sequence_number = hcs_result.get("sequence_number")
+                # Persist HCS data
+                self.db.execute(text("""
+                    UPDATE consumption_logs
+                    SET hcs_topic_id = :topic, hcs_sequence_number = :seq
+                    WHERE id = :id
+                """), {"topic": hcs_topic_id, "seq": hcs_sequence_number, "id": log_id})
+        except Exception as e:
+            logger.warning(f"HCS logging failed (non-critical): {e}")
 
-# Helper function for service instantiation
-def get_smart_meter_service(db: Session) -> SmartMeterService:
-    """
-    Get smart meter service instance.
-    
-    Args:
-        db: Database session
-    
-    Returns:
-        SmartMeterService instance
-    """
-    return SmartMeterService(db)
+        self.db.commit()
+
+        return {
+            "consumption_log_id": log_id,
+            "meter_id": meter_id,
+            "consumption_kwh": consumption_kwh,
+            "timestamp": timestamp,
+            "signature_valid": True,
+            "token_deduction": token_deduction,
+            "units_deducted": units_deducted,
+            "units_remaining": units_remaining,
+            "hcs_topic_id": hcs_topic_id,
+            "hcs_sequence_number": hcs_sequence_number,
+            "reading_before": reading_before,
+            "reading_after": reading_after,
+        }
+
+    # ------------------------------------------------------------------
+    # Simulator state management (in-process, no DB)
+    # ------------------------------------------------------------------
+
+    def start_simulator(self, meter_id: str) -> Dict[str, Any]:
+        """Start background simulator for a meter (in-memory state)."""
+        if meter_id in _simulator_state and _simulator_state[meter_id].get("running"):
+            return _simulator_state[meter_id]
+        _simulator_state[meter_id] = {
+            "running": True,
+            "meter_id": meter_id,
+            "current_reading": _simulator_state.get(meter_id, {}).get("current_reading", 1000.0),
+            "last_logged_reading": _simulator_state.get(meter_id, {}).get("last_logged_reading", 1000.0),
+            "total_consumed": _simulator_state.get(meter_id, {}).get("total_consumed", 0.0),
+            "logs_count": _simulator_state.get(meter_id, {}).get("logs_count", 0),
+            "started_at": datetime.utcnow().isoformat(),
+            "last_log_at": None,
+        }
+        logger.info(f"▶️  Simulator started for meter {meter_id}")
+        return _simulator_state[meter_id]
+
+    def stop_simulator(self, meter_id: str) -> Dict[str, Any]:
+        """Stop background simulator for a meter."""
+        if meter_id not in _simulator_state:
+            raise SmartMeterError(f"No simulator running for meter {meter_id}")
+        _simulator_state[meter_id]["running"] = False
+        logger.info(f"⏹️  Simulator stopped for meter {meter_id}")
+        return _simulator_state[meter_id]
+
+    def get_simulator_status(self, meter_id: str) -> Dict[str, Any]:
+        """Get current simulator state."""
+        if meter_id not in _simulator_state:
+            return {"running": False, "meter_id": meter_id}
+        return _simulator_state[meter_id]
+
+    def tick_simulator(self, meter_id: str, seconds: float = 5.0) -> Dict[str, Any]:
+        """
+        Advance simulator by `seconds` of simulated time.
+        Returns updated state. Called by the /simulator/tick endpoint.
+        """
+        import math, random
+        state = _simulator_state.get(meter_id)
+        if not state or not state["running"]:
+            raise SmartMeterError(f"Simulator not running for meter {meter_id}")
+
+        hour = datetime.utcnow().hour
+        day = datetime.utcnow().weekday()
+        base = 0.3
+        if 7 <= hour <= 9 or 18 <= hour <= 22:
+            base *= 2.5
+        elif hour >= 23 or hour <= 6:
+            base *= 0.4
+        else:
+            base *= 1.2
+        if day >= 5:
+            base *= 1.3
+        rate = base * (0.8 + random.random() * 0.4)
+
+        increment = rate * (seconds / 3600)
+        state["current_reading"] = round(state["current_reading"] + increment, 6)
+        state["total_consumed"] = round(state["total_consumed"] + increment, 6)
+        state["consumption_rate"] = round(rate, 4)
+        return state

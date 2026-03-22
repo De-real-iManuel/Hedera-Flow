@@ -5,57 +5,32 @@ export interface SmartMeterKeypair {
   public_key: string;
   algorithm: string;
   created_at: string;
+  kms_key_id?: string;
 }
 
 export interface ConsumptionLog {
-  id: string;
+  consumption_log_id: string;
   meter_id: string;
   consumption_kwh: number;
-  timestamp: number;  // Unix timestamp (int)
-  signature: string;
+  timestamp: number;
   signature_valid: boolean;
-  reading_before: number;
-  reading_after: number;
+  reading_before?: number;
+  reading_after?: number;
   units_deducted?: number;
   units_remaining?: number;
   hcs_topic_id?: string;
   hcs_sequence_number?: number;
+  token_deduction?: Record<string, unknown>;
 }
 
 export interface ConsumptionRequest {
   meter_id: string;
   consumption_kwh: number;
-  timestamp: number;  // Unix timestamp (int)
+  timestamp: number;
   signature: string;
   public_key: string;
-  reading_before: number;
-  reading_after: number;
-}
-
-export interface SignatureVerificationRequest {
-  meter_id: string;
-  consumption_kwh: number;
-  timestamp: string;
-  signature: string;
-  public_key: string;
-}
-
-export interface SignatureVerificationResult {
-  valid: boolean;
-  meter_id: string;
-  consumption_kwh: number;
-  timestamp: string;
-  signature: string;
-  algorithm: string;
-  error?: string;
-}
-
-export interface ConsumptionHistory {
-  logs: ConsumptionLog[];
-  total_consumption: number;
-  average_daily: number;
-  peak_consumption: number;
-  total_cost: number;
+  reading_before?: number;
+  reading_after?: number;
 }
 
 export interface SignConsumptionRequest {
@@ -77,60 +52,102 @@ export interface SignConsumptionResponse {
   reading_after?: number;
 }
 
+export interface SignatureVerificationRequest {
+  meter_id: string;
+  consumption_kwh: number;
+  timestamp: number;
+  signature: string;
+  public_key?: string;
+}
+
+export interface SignatureVerificationResult {
+  valid: boolean;
+  meter_id: string;
+  consumption_kwh: number;
+  timestamp: number;
+  message_hash: string;
+  algorithm: string;
+  error?: string;
+}
+
+export interface SimulatorState {
+  running: boolean;
+  meter_id: string;
+  current_reading: number;
+  last_logged_reading: number;
+  total_consumed: number;
+  logs_count: number;
+  consumption_rate?: number;
+  started_at?: string;
+  last_log_at?: string | null;
+}
+
+export interface SimulatorTickResponse {
+  state: SimulatorState;
+  auto_logged: {
+    consumption_log_id: string;
+    consumption_kwh: number;
+    hcs_sequence_number?: number;
+  } | null;
+}
+
 export const smartMeterApi = {
-  // Sign consumption data with meter's server-side ED25519 key
-  signConsumption: async (data: SignConsumptionRequest): Promise<SignConsumptionResponse> => {
-    const response = await apiClient.post<SignConsumptionResponse>('/smart-meter/sign', data);
-    return response.data;
-  },
-
-  // Generate keypair for a meter
   generateKeypair: async (meterId: string): Promise<SmartMeterKeypair> => {
-    const response = await apiClient.post<SmartMeterKeypair>('/smart-meter/generate-keypair', {
-      meter_id: meterId,
-    });
-    return response.data;
+    const res = await apiClient.post<SmartMeterKeypair>('/smart-meter/generate-keypair', { meter_id: meterId });
+    return res.data;
   },
 
-  // Get public key for a meter
   getPublicKey: async (meterId: string): Promise<string> => {
-    const response = await apiClient.get<{ public_key: string }>(`/smart-meter/public-key/${meterId}`);
-    return response.data.public_key;
+    const res = await apiClient.get<{ public_key: string }>(`/smart-meter/public-key/${meterId}`);
+    return res.data.public_key;
   },
 
-  // Log consumption data
+  signConsumption: async (data: SignConsumptionRequest): Promise<SignConsumptionResponse> => {
+    const res = await apiClient.post<SignConsumptionResponse>('/smart-meter/sign', data);
+    return res.data;
+  },
+
   logConsumption: async (data: ConsumptionRequest): Promise<ConsumptionLog> => {
-    const response = await apiClient.post<ConsumptionLog>('/smart-meter/consume', data);
-    return response.data;
+    const res = await apiClient.post<ConsumptionLog>('/smart-meter/consume', data);
+    return res.data;
   },
 
-  // Verify signature
   verifySignature: async (data: SignatureVerificationRequest): Promise<SignatureVerificationResult> => {
-    const response = await apiClient.post<SignatureVerificationResult>('/smart-meter/verify-signature', data);
-    return response.data;
+    const res = await apiClient.post<SignatureVerificationResult>('/smart-meter/verify-signature', data);
+    return res.data;
   },
 
-  // Get consumption logs for a meter
-  getConsumptionLogs: async (meterId: string, limit?: number, offset?: number): Promise<ConsumptionLog[]> => {
-    const params = new URLSearchParams();
-    if (limit) params.append('limit', limit.toString());
-    if (offset) params.append('offset', offset.toString());
-    
-    const response = await apiClient.get<ConsumptionLog[]>(`/smart-meter/consumption-logs/${meterId}?${params}`);
-    return response.data;
+  getConsumptionHistory: async (meterId: string, limit = 10): Promise<ConsumptionLog[]> => {
+    const res = await apiClient.get<ConsumptionLog[]>(`/smart-meter/consumption-history/${meterId}?limit=${limit}`);
+    return res.data;
   },
 
-  // Get consumption history with analytics
-  getConsumptionHistory: async (
-    meterId: string, 
-    dateFrom?: string, 
-    dateTo?: string
-  ): Promise<ConsumptionHistory> => {
-    const params = new URLSearchParams();
-    if (dateFrom) params.append('date_from', dateFrom);
-    if (dateTo) params.append('date_to', dateTo);
-    
-    const response = await apiClient.get<ConsumptionHistory>(`/smart-meter/consumption-history/${meterId}?${params}`);
-    return response.data;
+  getConsumptionLogs: async (meterId: string, limit = 50): Promise<{ logs: ConsumptionLog[]; total: number }> => {
+    const res = await apiClient.get<{ logs: ConsumptionLog[]; total: number }>(`/smart-meter/consumption-logs?meter_id=${meterId}&limit=${limit}`);
+    return res.data;
+  },
+
+  // Simulator API
+  startSimulator: async (meterId: string): Promise<SimulatorState> => {
+    const res = await apiClient.post<SimulatorState>('/smart-meter/simulator/start', { meter_id: meterId });
+    return res.data;
+  },
+
+  stopSimulator: async (meterId: string): Promise<SimulatorState> => {
+    const res = await apiClient.post<SimulatorState>('/smart-meter/simulator/stop', { meter_id: meterId });
+    return res.data;
+  },
+
+  getSimulatorStatus: async (meterId: string): Promise<SimulatorState> => {
+    const res = await apiClient.get<SimulatorState>(`/smart-meter/simulator/status/${meterId}`);
+    return res.data;
+  },
+
+  tickSimulator: async (meterId: string, seconds = 5): Promise<SimulatorTickResponse> => {
+    const res = await apiClient.post<SimulatorTickResponse>('/smart-meter/simulator/tick', {
+      meter_id: meterId,
+      seconds,
+    });
+    return res.data;
   },
 };
