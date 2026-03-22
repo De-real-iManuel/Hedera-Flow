@@ -228,14 +228,12 @@ def _sign_body(body_bytes: bytes, key_hex: str) -> bytes:
 
 
 
-_TESTNET_NODE_ACCOUNTS = ["0.0.3", "0.0.4", "0.0.5", "0.0.6"]
-
-# Hedera testnet node REST endpoints (port 443, HTTPS)
-_TESTNET_NODE_HOSTS = [
-    "https://0.testnet.hedera.com",
-    "https://1.testnet.hedera.com",
-    "https://2.testnet.hedera.com",
-    "https://3.testnet.hedera.com",
+# Node account ID must match the gRPC host it's sent to — they are paired
+_TESTNET_NODES = [
+    ("0.0.3", "0.testnet.hedera.com"),
+    ("0.0.4", "1.testnet.hedera.com"),
+    ("0.0.5", "2.testnet.hedera.com"),
+    ("0.0.6", "3.testnet.hedera.com"),
 ]
 
 
@@ -330,18 +328,12 @@ def _submit_grpc(tx_bytes: bytes, method: str) -> None:
     Try all testnet consensus nodes via gRPC (port 50211).
     Acceptable precheck codes: 0=OK, 22=SUCCESS, 10=DUPLICATE_TRANSACTION.
     """
-    nodes = [
-        ("0.testnet.hedera.com", 50211),
-        ("1.testnet.hedera.com", 50211),
-        ("2.testnet.hedera.com", 50211),
-        ("3.testnet.hedera.com", 50211),
-    ]
     last_err: Exception = RuntimeError("no nodes tried")
-    for host, port in nodes:
+    for _, host in _TESTNET_NODES:
         try:
-            resp_bytes = _grpc_submit_raw(tx_bytes, host, port, method)
+            resp_bytes = _grpc_submit_raw(tx_bytes, host, 50211, method)
             code = _parse_precheck_code(resp_bytes)
-            logger.info(f"gRPC {host}:{port} response code={code}")
+            logger.info(f"gRPC {host}:50211 response code={code}")
             if code in (0, 22, 10):
                 return
             if code == 11:
@@ -352,7 +344,7 @@ def _submit_grpc(tx_bytes: bytes, method: str) -> None:
             raise
         except Exception as exc:
             last_err = exc
-            logger.warning(f"gRPC {host}:{port} failed: {exc}")
+            logger.warning(f"gRPC {host}:50211 failed: {exc}")
     raise RuntimeError(f"all gRPC nodes failed: {last_err}")
 
 
@@ -391,18 +383,22 @@ class HederaService:
 
         secs = int(time.time())
         nanos = time.time_ns() % 1_000_000_000
-        node = secrets.choice(_TESTNET_NODE_ACCOUNTS)
+        node_account, node_host = secrets.choice(_TESTNET_NODES)
 
         inner = _build_crypto_create(new_pub, int(initial_balance_hbar * 100_000_000))
         body = _build_transaction_body(
-            payer=self._operator_id, node=node,
+            payer=self._operator_id, node=node_account,
             memo="HederaFlow custodial account",
             fee=200_000_000, duration=120,
             secs=secs, nanos=nanos,
             inner_field=11, inner=inner,
         )
         tx_bytes = _sign_body(body, self._operator_key_raw)
-        _submit_grpc(tx_bytes, "/proto.CryptoService/createAccount")
+        resp_bytes = _grpc_submit_raw(tx_bytes, node_host, 50211, "/proto.CryptoService/createAccount")
+        code = _parse_precheck_code(resp_bytes)
+        logger.info(f"createAccount gRPC {node_host} code={code}")
+        if code not in (0, 22, 10):
+            raise RuntimeError(f"createAccount precheck failed code={code}")
 
         tx_id = f"{self._operator_id}@{secs}.{nanos:09d}"
         account_id = self._poll_for_account_id(tx_id)
@@ -428,25 +424,38 @@ class HederaService:
         tinybars = int(amount_hbar * 100_000_000)
         secs = int(time.time())
         nanos = time.time_ns() % 1_000_000_000
-        node = secrets.choice(_TESTNET_NODE_ACCOUNTS)
 
-        inner = _build_crypto_transfer([(payer, -tinybars), (to_account_id, tinybars)])
-        body = _build_transaction_body(
-            payer=payer, node=node,
-            memo=memo[:100], fee=200_000_000, duration=120,
-            secs=secs, nanos=nanos,
-            inner_field=14, inner=inner,
-        )
-
-        # Choose signing method based on key type
-        tx_bytes = _sign_body(body, payer_private_key_hex)
-
-        logger.info(f"TX body hex (first 60 bytes): {body[:60].hex()}")
-        _submit_grpc(tx_bytes, "/proto.CryptoService/cryptoTransfer")
-
-        tx_id = f"{payer}@{secs}.{nanos:09d}"
-        logger.info(f"HBAR transfer complete: {tx_id}")
-        return tx_id
+        last_err: Exception = RuntimeError("no nodes tried")
+        for node_account, node_host in _TESTNET_NODES:
+            inner = _build_crypto_transfer([(payer, -tinybars), (to_account_id, tinybars)])
+            body = _build_transaction_body(
+                payer=payer, node=node_account,
+                memo=memo[:100], fee=200_000_000, duration=120,
+                secs=secs, nanos=nanos,
+                inner_field=14, inner=inner,
+            )
+            tx_bytes = _sign_body(body, payer_private_key_hex)
+            logger.info(f"TX body hex (first 60 bytes): {body[:60].hex()}")
+            try:
+                resp_bytes = _grpc_submit_raw(tx_bytes, node_host, 50211, "/proto.CryptoService/cryptoTransfer")
+                code = _parse_precheck_code(resp_bytes)
+                logger.info(f"gRPC {node_host}:50211 response code={code}")
+                if code in (0, 22, 10):
+                    tx_id = f"{payer}@{secs}.{nanos:09d}"
+                    logger.info(f"HBAR transfer complete: {tx_id}")
+                    return tx_id
+                if code == 11:
+                    last_err = RuntimeError(f"node busy code=11")
+                    continue
+                last_err = RuntimeError(f"precheck failed code={code}")
+                # Don't retry other nodes on INVALID_TRANSACTION — different node = different tx body
+                raise last_err
+            except RuntimeError:
+                raise
+            except Exception as exc:
+                last_err = exc
+                logger.warning(f"gRPC {node_host}:50211 failed: {exc}")
+        raise RuntimeError(f"all nodes failed: {last_err}")
 
     def log_payment_to_hcs(
         self,
@@ -475,18 +484,22 @@ class HederaService:
             topic_num = _parse_account_num(topic_id)
             secs = int(time.time())
             nanos = time.time_ns() % 1_000_000_000
-            node = secrets.choice(_TESTNET_NODE_ACCOUNTS)
+            node_account, node_host = secrets.choice(_TESTNET_NODES)
             msg = json.dumps(payload).encode("utf-8")
             topic_bytes = _build_account_id(0, 0, topic_num)
             inner = _len_field(1, topic_bytes) + _len_field(2, msg)
             body = _build_transaction_body(
-                payer=self._operator_id, node=node,
+                payer=self._operator_id, node=node_account,
                 memo="HederaFlow HCS", fee=100_000_000, duration=120,
                 secs=secs, nanos=nanos,
-                inner_field=27, inner=inner,
+                inner_field=50, inner=inner,
             )
             tx_bytes = _sign_body(body, self._operator_key_raw)
-            _submit_grpc(tx_bytes, "/proto.ConsensusService/submitMessage")
+            resp_bytes = _grpc_submit_raw(tx_bytes, node_host, 50211, "/proto.ConsensusService/submitMessage")
+            code = _parse_precheck_code(resp_bytes)
+            logger.info(f"HCS gRPC {node_host} code={code}")
+            if code not in (0, 22, 10):
+                raise RuntimeError(f"HCS precheck failed code={code}")
             submitted = True
             logger.info(f"HCS message submitted to topic {topic_id}")
         except Exception as exc:
