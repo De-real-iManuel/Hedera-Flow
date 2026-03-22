@@ -11,7 +11,7 @@ export interface ConsumptionLog {
   id: string;
   meter_id: string;
   consumption_kwh: number;
-  timestamp: string;
+  timestamp: number;  // Unix timestamp (int)
   signature: string;
   signature_valid: boolean;
   reading_before: number;
@@ -25,7 +25,7 @@ export interface ConsumptionLog {
 export interface ConsumptionRequest {
   meter_id: string;
   consumption_kwh: number;
-  timestamp: string;
+  timestamp: number;  // Unix timestamp (int)
   signature: string;
   public_key: string;
   reading_before: number;
@@ -58,7 +58,32 @@ export interface ConsumptionHistory {
   total_cost: number;
 }
 
+export interface SignConsumptionRequest {
+  meter_id: string;
+  consumption_kwh: number;
+  timestamp: number;
+  reading_before?: number;
+  reading_after?: number;
+}
+
+export interface SignConsumptionResponse {
+  meter_id: string;
+  consumption_kwh: number;
+  timestamp: number;
+  signature: string;
+  public_key: string;
+  message_hash: string;
+  reading_before?: number;
+  reading_after?: number;
+}
+
 export const smartMeterApi = {
+  // Sign consumption data with meter's server-side ED25519 key
+  signConsumption: async (data: SignConsumptionRequest): Promise<SignConsumptionResponse> => {
+    const response = await apiClient.post<SignConsumptionResponse>('/smart-meter/sign', data);
+    return response.data;
+  },
+
   // Generate keypair for a meter
   generateKeypair: async (meterId: string): Promise<SmartMeterKeypair> => {
     const response = await apiClient.post<SmartMeterKeypair>('/smart-meter/generate-keypair', {

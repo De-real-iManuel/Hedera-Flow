@@ -145,13 +145,10 @@ export function SmartMeterSimulator({
       setTotalConsumed(prev => prev + increment);
     }, 5000);
 
-    // Log consumption every 30 seconds (simulating periodic meter readings)
-    logIntervalRef.current = setInterval(() => {
-      logConsumption();
-    }, 30000);
+    // No fixed-time log interval — logging is triggered by 0.1 kWh threshold in useEffect
 
     toast.success('Smart meter simulation started', {
-      description: 'Generating realistic consumption patterns',
+      description: 'Will log to HCS every 0.1 kWh consumed',
     });
   };
 
@@ -179,39 +176,54 @@ export function SmartMeterSimulator({
     toast.info('Smart meter simulation reset');
   };
 
-  // Log consumption to backend
+  // Auto-log when consumption crosses 0.1 kWh threshold
+  useEffect(() => {
+    if (!isRunning || isLogging) return;
+    const delta = currentReading - lastLoggedReading;
+    if (delta >= 0.1) {
+      logConsumption();
+    }
+  }, [currentReading]);
+
+  // Log consumption to backend with real ED25519 signature
   const logConsumption = async () => {
     if (isLogging || !publicKey) return;
     
     setIsLogging(true);
     
     try {
-      const consumptionKwh = currentReading - lastLoggedReading;
+      const readingBefore = lastLoggedReading;
+      const readingAfter = currentReading;
+      const consumptionKwh = readingAfter - readingBefore;
       
-      // Skip if consumption is too small
       if (consumptionKwh < 0.001) {
         setIsLogging(false);
         return;
       }
 
-      const timestamp = new Date().toISOString();
-      
-      // Generate a mock signature (in real implementation, this would be done by the meter)
-      const mockSignature = generateMockSignature(consumptionKwh, timestamp, meterNumber);
-      
-      const consumptionData = {
+      const timestamp = Math.floor(Date.now() / 1000); // Unix timestamp (int)
+
+      // Step 1: Get real ED25519 signature from server
+      const signed = await smartMeterApi.signConsumption({
         meter_id: meterId,
         consumption_kwh: consumptionKwh,
         timestamp,
-        signature: mockSignature,
-        public_key: publicKey,
-        reading_before: lastLoggedReading,
-        reading_after: currentReading,
-      };
+        reading_before: readingBefore,
+        reading_after: readingAfter,
+      });
 
-      const log = await smartMeterApi.logConsumption(consumptionData);
+      // Step 2: Submit consumption with real signature
+      const log = await smartMeterApi.logConsumption({
+        meter_id: meterId,
+        consumption_kwh: consumptionKwh,
+        timestamp,
+        signature: signed.signature,
+        public_key: signed.public_key,
+        reading_before: readingBefore,
+        reading_after: readingAfter,
+      });
       
-      setLastLoggedReading(currentReading);
+      setLastLoggedReading(readingAfter);
       setLogsCount(prev => prev + 1);
       setLastLogTime(new Date());
       
@@ -219,9 +231,9 @@ export function SmartMeterSimulator({
         onConsumptionLogged(log);
       }
 
-      toast.success('Consumption logged', {
-        description: `${consumptionKwh.toFixed(3)} kWh verified and logged to blockchain`,
-        duration: 3000,
+      toast.success('Consumption logged to Hedera HCS', {
+        description: `${consumptionKwh.toFixed(3)} kWh · seq #${log.hcs_sequence_number ?? '—'}`,
+        duration: 4000,
       });
       
     } catch (error) {
@@ -232,14 +244,6 @@ export function SmartMeterSimulator({
     } finally {
       setIsLogging(false);
     }
-  };
-
-  // Generate mock signature for demo purposes
-  const generateMockSignature = (consumption: number, timestamp: string, meterNumber: string): string => {
-    // In a real implementation, this would be done by the smart meter's secure element
-    const data = `${consumption}:${timestamp}:${meterNumber}`;
-    const hash = btoa(data).slice(0, 32);
-    return `0x${hash}...ed25519`;
   };
 
   // Cleanup on unmount

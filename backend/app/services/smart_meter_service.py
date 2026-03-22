@@ -782,42 +782,20 @@ class SmartMeterService:
                         "units_remaining": float(units_remaining) if units_remaining is not None else None
                     }
 
-                    # Submit to HCS
-                    # Requirements: FR-9.8 (Log consumption to HCS with tag SMART_METER_CONSUMPTION)
+                    # Submit to HCS using pure-Python gRPC implementation
                     from app.services.hedera_service import HederaService
-                    
+
                     hedera_service = HederaService()
+                    hcs_result = hedera_service.log_to_hcs(hcs_topic_id, hcs_message)
+                    hcs_sequence_number = hcs_result.get("sequence_number")
 
-                    # Check if mock mode or force mock for testing
-                    use_mock = hedera_service.mock_mode or os.getenv('HEDERA_MOCK_MODE', 'False').lower() == 'true'
-                    
-                    if use_mock:
-                        # In mock mode, generate a fake sequence number
-                        import random
-                        hcs_sequence_number = random.randint(10000, 99999)
-                        logger.info(
-                            f"🎭 Mock: Logged to HCS topic {hcs_topic_id}, "
-                            f"sequence: {hcs_sequence_number}"
-                        )
-                    else:
-                        # Real HCS submission
-                        from hedera import TopicMessageSubmitTransaction, TopicId
-                        
-                        topic = TopicId.fromString(hcs_topic_id)
-                        transaction = (
-                            TopicMessageSubmitTransaction()
-                            .setTopicId(topic)
-                            .setMessage(json.dumps(hcs_message))
-                        )
-
-                        response = transaction.execute(hedera_service.client)
-                        receipt = response.getReceipt(hedera_service.client)
-                        hcs_sequence_number = receipt.topicSequenceNumber
-
+                    if hcs_result.get("submitted"):
                         logger.info(
                             f"⛓️ Logged to HCS topic {hcs_topic_id}, "
                             f"sequence: {hcs_sequence_number}"
                         )
+                    else:
+                        logger.warning(f"⚠️ HCS submit failed for topic {hcs_topic_id}")
 
                     # Update consumption log with HCS details
                     # Requirements: Store HCS sequence number in consumption_logs table
@@ -842,12 +820,6 @@ class SmartMeterService:
 
             except Exception as e:
                 logger.error(f"Failed to log to HCS (non-critical): {e}")
-                # In case of HCS failure, use mock sequence number for testing
-                # This ensures tests don't fail due to Hedera network issues
-                if hcs_sequence_number is None and hcs_topic_id is not None:
-                    import random
-                    hcs_sequence_number = random.randint(10000, 99999)
-                    logger.warning(f"🎭 Using mock sequence number due to HCS error: {hcs_sequence_number}")
                 # Continue even if HCS logging fails
 
             # Commit all changes

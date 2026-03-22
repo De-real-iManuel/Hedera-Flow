@@ -83,6 +83,87 @@ class VerifySignatureResponse(BaseModel):
     error: Optional[str] = None
 
 
+class SignConsumptionRequest(BaseModel):
+    """Request to sign consumption data with meter's private key"""
+    meter_id: str = Field(..., description="UUID of the meter")
+    consumption_kwh: float = Field(..., gt=0, description="Consumption amount in kWh")
+    timestamp: int = Field(..., description="Unix timestamp of consumption")
+    reading_before: Optional[float] = Field(None)
+    reading_after: Optional[float] = Field(None)
+
+
+class SignConsumptionResponse(BaseModel):
+    """Signed consumption data ready to submit to /consume"""
+    meter_id: str
+    consumption_kwh: float
+    timestamp: int
+    signature: str
+    public_key: str
+    message_hash: str
+    reading_before: Optional[float] = None
+    reading_after: Optional[float] = None
+
+
+@router.post("/sign", response_model=SignConsumptionResponse)
+async def sign_consumption(
+    request: SignConsumptionRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Sign consumption data with the meter's server-side ED25519 private key.
+
+    The private key never leaves the server (stored AES-256 encrypted).
+    Returns the signature so the frontend can immediately call /consume.
+
+    Requirements: FR-9.4, FR-9.5
+    """
+    try:
+        try:
+            meter_uuid = UUID(request.meter_id)
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid meter ID format")
+
+        from app.models.meter import Meter
+        meter = db.query(Meter).filter(Meter.id == meter_uuid, Meter.user_id == current_user.id).first()
+        if not meter:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Meter not found")
+
+        smart_meter_service = SmartMeterService(db)
+
+        if not smart_meter_service.keypair_exists(str(meter_uuid)):
+            # Auto-generate keypair on first sign
+            smart_meter_service.generate_keypair(str(meter_uuid))
+            logger.info(f"Auto-generated keypair for meter {meter_uuid}")
+
+        result = smart_meter_service.sign_consumption(
+            meter_id=str(meter_uuid),
+            consumption_kwh=request.consumption_kwh,
+            timestamp=request.timestamp,
+            reading_before=request.reading_before,
+            reading_after=request.reading_after,
+        )
+
+        return SignConsumptionResponse(
+            meter_id=result["meter_id"],
+            consumption_kwh=result["consumption_kwh"],
+            timestamp=result["timestamp"],
+            signature=result["signature"],
+            public_key=result["public_key"],
+            message_hash=result["message_hash"],
+            reading_before=result.get("reading_before"),
+            reading_after=result.get("reading_after"),
+        )
+
+    except SmartMeterError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Sign consumption failed: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
 @router.post("/generate-keypair", response_model=GenerateKeypairResponse)
 async def generate_keypair(
     request: GenerateKeypairRequest,
