@@ -465,6 +465,144 @@ async def confirm_payment(
     )
 
 
+@router.post("/{bill_id}/pay-custodial")
+async def pay_custodial(
+    bill_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Pay a postpaid bill using the user's custodial KMS wallet (no HashPack required).
+
+    Signs and submits the HBAR transfer server-side using the user's encrypted
+    private key stored in AWS KMS. Falls back to operator key if user has no KMS key.
+    """
+    import os
+    from app.services.aws_kms_service import AWSKMSService
+
+    try:
+        bill_uuid = UUID(bill_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid bill ID format")
+
+    bill = db.query(Bill).filter(Bill.id == bill_uuid, Bill.user_id == current_user.id).first()
+    if not bill:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Bill not found")
+    if bill.status == "paid":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Bill already paid")
+
+    # Get utility provider Hedera account
+    from app.models.meter import Meter
+    meter = db.query(Meter).filter(Meter.id == bill.meter_id).first()
+    utility_hedera_account = None
+    if meter and meter.utility_provider_id:
+        from app.models.utility_provider import UtilityProvider
+        up = db.query(UtilityProvider).filter(UtilityProvider.id == meter.utility_provider_id).first()
+        if up and up.hedera_account_id:
+            utility_hedera_account = up.hedera_account_id
+    if not utility_hedera_account:
+        utility_hedera_account = os.getenv("HEDERA_TREASURY_ACCOUNT", "0.0.7942957")
+
+    # Calculate HBAR amount
+    from app.services.exchange_rate_service import ExchangeRateService
+    try:
+        exchange_service = ExchangeRateService(db)
+        calculation = exchange_service.calculate_hbar_amount(
+            fiat_amount=float(bill.total_fiat),
+            currency=bill.currency,
+            use_cache=True,
+            apply_buffer=True,
+            buffer_percentage=2.0,
+        )
+        amount_hbar = float(calculation["hbar_amount_rounded"])
+        hbar_price = Decimal(str(calculation["hbar_price"]))
+    except Exception as e:
+        logger.error(f"Exchange rate error: {e}")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Exchange rate service unavailable")
+
+    # Resolve payer credentials (user KMS key or operator fallback)
+    payer_account_id = None
+    payer_key_hex = None
+
+    prefs = current_user.preferences or {}
+    encrypted_key = prefs.get("encrypted_hedera_key")
+    user_hedera_account = current_user.hedera_account_id
+
+    if encrypted_key and user_hedera_account:
+        try:
+            kms = AWSKMSService()
+            payer_key_hex = kms.decrypt_private_key(encrypted_key)
+            payer_account_id = user_hedera_account
+            logger.info(f"Using KMS key for user {current_user.email} ({payer_account_id})")
+        except Exception as e:
+            logger.warning(f"KMS decrypt failed for {current_user.email}, falling back to operator: {e}")
+            payer_account_id = None
+            payer_key_hex = None
+
+    memo = f"Bill payment: BILL-{bill.currency}-{bill.created_at.year}-{str(bill.id)[:8]}"
+
+    # Submit HBAR transfer
+    hedera_service = get_hedera_service()
+    try:
+        tx_id = hedera_service.transfer_hbar(
+            to_account_id=utility_hedera_account,
+            amount_hbar=amount_hbar,
+            memo=memo,
+            payer_account_id=payer_account_id,
+            payer_private_key_hex=payer_key_hex,
+        )
+    except Exception as e:
+        logger.error(f"HBAR transfer failed: {e}")
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"HBAR transfer failed: {str(e)}")
+
+    # Update bill
+    now = datetime.utcnow()
+    bill.status = "paid"
+    bill.hedera_tx_id = tx_id
+    bill.amount_hbar = Decimal(str(amount_hbar))
+    bill.exchange_rate = hbar_price
+    bill.exchange_rate_timestamp = now
+    bill.paid_at = now
+
+    # Log to HCS
+    country_to_topic = {
+        "EUR": os.getenv("HEDERA_TOPIC_EU", "0.0.5078302"),
+        "USD": os.getenv("HEDERA_TOPIC_US", "0.0.5078303"),
+        "INR": os.getenv("HEDERA_TOPIC_ASIA", "0.0.5078304"),
+        "BRL": os.getenv("HEDERA_TOPIC_SA", "0.0.5078305"),
+        "NGN": os.getenv("HEDERA_TOPIC_AFRICA", "0.0.5078306"),
+    }
+    hcs_topic_id = country_to_topic.get(bill.currency, os.getenv("HEDERA_TOPIC_EU", "0.0.5078302"))
+    try:
+        hcs_result = hedera_service.log_payment_to_hcs(
+            topic_id=hcs_topic_id,
+            bill_id=str(bill.id),
+            amount_fiat=float(bill.total_fiat),
+            currency_fiat=bill.currency,
+            amount_hbar=amount_hbar,
+            exchange_rate=float(hbar_price),
+            tx_id=tx_id,
+        )
+        bill.hcs_topic_id = hcs_result["topic_id"]
+        bill.hcs_sequence_number = hcs_result["sequence_number"]
+    except Exception as e:
+        logger.warning(f"HCS logging failed (non-fatal): {e}")
+
+    db.commit()
+    db.refresh(bill)
+    logger.info(f"Custodial payment complete: bill={bill.id}, tx={tx_id}")
+
+    return {
+        "status": "paid",
+        "hedera_tx_id": tx_id,
+        "amount_hbar": amount_hbar,
+        "amount_fiat": float(bill.total_fiat),
+        "currency": bill.currency,
+        "explorer_url": f"https://hashscan.io/testnet/transaction/{tx_id}",
+        "hcs_sequence_number": bill.hcs_sequence_number,
+    }
+
+
 @router.get("/{payment_id}", response_model=PaymentReceipt)
 async def get_payment(
     payment_id: str,

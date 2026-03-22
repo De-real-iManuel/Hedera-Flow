@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Zap, Shield, Camera as CameraIcon, AlertCircle, Wallet, Pencil } from "lucide-react";
+import { Zap, Shield, Camera as CameraIcon, AlertCircle, Pencil } from "lucide-react";
 import AppHeader from "@/components/AppHeader";
 import { Camera } from "@/components/Camera";
 import { VerificationResult, VerificationResultData } from "@/components/VerificationResult";
@@ -14,7 +14,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useHashPack, PaymentTransaction } from "@/lib/hashpack";
 
 const ScanPage = () => {
   const [phase, setPhase] = useState<"ready" | "scanning" | "manual" | "result" | "receipt">("ready");
@@ -24,14 +23,11 @@ const ScanPage = () => {
   const [selectedMeterId, setSelectedMeterId] = useState<string>("");
   const [billId, setBillId] = useState<string | null>(null);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
-  const [connectedAccount, setConnectedAccount] = useState<string | null>(null);
-  const [showWalletConnect, setShowWalletConnect] = useState(false);
   const [manualReading, setManualReading] = useState<string>("");
   const [isSubmittingManual, setIsSubmittingManual] = useState(false);
   const { toast } = useToast();
   const { user } = useAuth();
   const { meters, isLoading: metersLoading } = useMeters();
-  const hashPack = useHashPack();
 
   // Auto-select meter if only one available
   useEffect(() => {
@@ -39,12 +35,6 @@ const ScanPage = () => {
       setSelectedMeterId(meters[0].id);
     }
   }, [meters, selectedMeterId]);
-
-  // Check for existing HashPack connection
-  useEffect(() => {
-    const account = hashPack.getConnectedAccount();
-    if (account) setConnectedAccount(account);
-  }, []);
 
   const handleCapture = async (file: File) => {
     if (!selectedMeterId) {
@@ -148,19 +138,6 @@ const ScanPage = () => {
     setPhase("ready");
   };
 
-  const handleConnectWallet = async () => {
-    const account = await hashPack.connect();
-    if (account) {
-      setConnectedAccount(account);
-      setShowWalletConnect(false);
-    }
-  };
-
-  const handleDisconnectWallet = async () => {
-    await hashPack.disconnect();
-    setConnectedAccount(null);
-  };
-
   const handlePayment = async () => {
     if (!billId) {
       toast({
@@ -171,69 +148,37 @@ const ScanPage = () => {
       return;
     }
 
-    // Connect wallet if not already connected
-    let account = connectedAccount;
-    if (!account) {
-      account = await hashPack.connect();
-      if (!account) {
-        toast({
-          title: "Wallet Required",
-          description: "Please connect your HashPack wallet to pay with HBAR.",
-          variant: "destructive",
-        });
-        return;
-      }
-      setConnectedAccount(account);
-    }
-
     setIsProcessingPayment(true);
 
     try {
-      // Prepare payment with backend
-      const paymentPrep = await paymentsApi.prepare(billId);
-
       toast({
-        title: "Payment Prepared",
-        description: `Amount: ${paymentPrep.transaction.amount_hbar} HBAR (${paymentPrep.bill.total_fiat} ${paymentPrep.bill.currency})`,
+        title: "Processing Payment",
+        description: "Submitting HBAR payment on Hedera...",
       });
 
-      // Execute payment through HashPack
-      const paymentTransaction: PaymentTransaction = {
-        from: account,
-        to: paymentPrep.transaction.to,
-        amount: paymentPrep.transaction.amount_hbar,
-        memo: paymentPrep.transaction.memo,
-        billId: billId,
-        fiatAmount: paymentPrep.bill.total_fiat,
-        currency: paymentPrep.bill.currency,
-      };
+      const result = await paymentsApi.payCustodial(billId);
 
-      const txResult = await hashPack.executePayment(paymentTransaction);
-
-      if (!txResult.success || !txResult.transactionId) {
-        throw new Error(txResult.error || "Transaction failed");
-      }
-
+      const selectedMeter = meters?.find((m) => m.id === selectedMeterId);
       const receiptData: PaymentReceiptData = {
         id: `payment-${Date.now()}`,
         billId: billId,
-        transactionId: txResult.transactionId,
+        transactionId: result.hedera_tx_id,
         amount: {
-          hbar: paymentPrep.transaction.amount_hbar,
-          fiat: paymentPrep.bill.total_fiat,
-          currency: paymentPrep.bill.currency,
+          hbar: result.amount_hbar,
+          fiat: result.amount_fiat,
+          currency: result.currency,
         },
-        exchangeRate: paymentPrep.exchange_rate.hbar_price,
+        exchangeRate: result.amount_hbar > 0 ? result.amount_fiat / result.amount_hbar : 0,
         timestamp: new Date().toISOString(),
         consensusTimestamp: new Date().toISOString(),
         status: "confirmed",
-        explorerUrl: `https://hashscan.io/testnet/transaction/${txResult.transactionId}`,
+        explorerUrl: result.explorer_url,
         meter: {
-          id: meters?.find((m) => m.id === selectedMeterId)?.meter_id || selectedMeterId,
-          address: meters?.find((m) => m.id === selectedMeterId)?.address,
+          id: selectedMeter?.meter_id || selectedMeterId,
+          address: selectedMeter?.address,
         },
         consumption: {
-          kwh: paymentPrep.bill.consumption_kwh,
+          kwh: verificationResult?.consumption || 0,
           period: "Current billing period",
         },
       };
@@ -298,40 +243,8 @@ const ScanPage = () => {
 
       <div className="px-5 py-6">
         <AnimatePresence mode="wait">
-          {/* HashPack Connect Modal */}
-          {showWalletConnect && (
-            <motion.div
-              key="wallet-connect"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="space-y-4"
-            >
-              <Card>
-                <CardHeader>
-                  <CardTitle>Connect HashPack Wallet</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <p className="text-sm text-muted-foreground">
-                    Connect your HashPack wallet to pay for electricity with HBAR or USDC on Hedera.
-                  </p>
-                  <Button onClick={handleConnectWallet} className="w-full">
-                    Connect HashPack
-                  </Button>
-                </CardContent>
-              </Card>
-              <Button
-                variant="outline"
-                onClick={() => setShowWalletConnect(false)}
-                className="w-full"
-              >
-                Cancel
-              </Button>
-            </motion.div>
-          )}
-
           {/* Meter Selection */}
-          {!selectedMeterId && meters.length > 1 && !showWalletConnect && (
+          {!selectedMeterId && meters.length > 1 && (
             <motion.div
               key="meter-selection"
               initial={{ opacity: 0 }}
@@ -373,7 +286,7 @@ const ScanPage = () => {
           )}
 
           {/* Ready State */}
-          {phase === "ready" && selectedMeterId && !showWalletConnect && (
+          {phase === "ready" && selectedMeterId && (
             <motion.div
               key="ready"
               initial={{ opacity: 0 }}
@@ -381,49 +294,6 @@ const ScanPage = () => {
               exit={{ opacity: 0 }}
               className="space-y-6"
             >
-              {/* Wallet Status */}
-              {connectedAccount ? (
-                <Card className="border-green-200 bg-green-50">
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Wallet className="w-4 h-4 text-green-600" />
-                        <span className="text-sm font-medium text-green-900">HashPack Connected</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Badge variant="default" className="bg-green-600">
-                          {connectedAccount}
-                        </Badge>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={handleDisconnectWallet}
-                          className="text-xs text-red-500 hover:text-red-700 h-auto p-1"
-                        >
-                          Disconnect
-                        </Button>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ) : (
-                <Card className="border-orange-200 bg-orange-50">
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Wallet className="w-4 h-4 text-orange-600" />
-                        <span className="text-sm font-medium text-orange-900">
-                          Connect wallet to pay with HBAR
-                        </span>
-                      </div>
-                      <Button size="sm" onClick={() => setShowWalletConnect(true)}>
-                        Connect
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-
               {/* Selected Meter Info */}
               {meters.length > 1 && (
                 <Card>

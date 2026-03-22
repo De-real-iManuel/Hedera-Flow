@@ -168,6 +168,19 @@ export const paymentsApi = {
     const response = await apiClient.get<PaymentReceipt[]>('/payments');
     return response.data;
   },
+
+  payCustodial: async (billId: string): Promise<{
+    status: string;
+    hedera_tx_id: string;
+    amount_hbar: number;
+    amount_fiat: number;
+    currency: string;
+    explorer_url: string;
+    hcs_sequence_number?: number;
+  }> => {
+    const response = await apiClient.post(`/payments/${billId}/pay-custodial`);
+    return response.data;
+  },
 };
 
 // Utility Providers API
