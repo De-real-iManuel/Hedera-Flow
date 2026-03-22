@@ -149,26 +149,12 @@ class AWSKMSService:
             
             logger.info(f"🔐 Creating KMS key for meter {meter_id}")
             
-            # Create asymmetric signing key
+            # Create asymmetric signing key (no Tags — avoids kms:TagResource permission)
             response = self.kms_client.create_key(
                 KeyUsage='SIGN_VERIFY',
                 KeySpec='ECC_SECG_P256K1',  # secp256k1 for Hedera compatibility
                 Origin='AWS_KMS',
                 Description=description,
-                Tags=[
-                    {
-                        'TagKey': 'Project',
-                        'TagValue': 'Hedera-Flow'
-                    },
-                    {
-                        'TagKey': 'MeterID',
-                        'TagValue': meter_id
-                    },
-                    {
-                        'TagKey': 'Purpose',
-                        'TagValue': 'SmartMeterSigning'
-                    }
-                ]
             )
             
             key_metadata = response['KeyMetadata']

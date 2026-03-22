@@ -2,7 +2,7 @@
 Bill Management Endpoints
 View and manage electricity bills
 """
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status as http_status, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import logging
@@ -58,20 +58,20 @@ async def list_bills(
                 ).first()
                 if not meter:
                     raise HTTPException(
-                        status_code=status.HTTP_404_NOT_FOUND,
+                        status_code=http_status.HTTP_404_NOT_FOUND,
                         detail="Meter not found"
                     )
                 query = query.filter(Bill.meter_id == meter_uuid)
             except ValueError:
                 raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
+                    status_code=http_status.HTTP_400_BAD_REQUEST,
                     detail="Invalid meter ID format"
                 )
         
         if status:
             if status not in ['pending', 'paid', 'disputed', 'refunded']:
                 raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
+                    status_code=http_status.HTTP_400_BAD_REQUEST,
                     detail="Invalid status. Must be one of: pending, paid, disputed, refunded"
                 )
             query = query.filter(Bill.status == status)
@@ -112,7 +112,7 @@ async def list_bills(
     except Exception as e:
         logger.error(f"Error listing bills: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve bills"
         )
 
@@ -141,7 +141,7 @@ async def get_bill(
         bill_uuid = UUID(bill_id)
     except ValueError:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail="Invalid bill ID format"
         )
     
@@ -152,7 +152,7 @@ async def get_bill(
     
     if not bill:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=http_status.HTTP_404_NOT_FOUND,
             detail="Bill not found"
         )
     
@@ -206,7 +206,7 @@ async def get_bill_breakdown(
         bill_uuid = UUID(bill_id)
     except ValueError:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail="Invalid bill ID format"
         )
     
@@ -217,7 +217,7 @@ async def get_bill_breakdown(
     
     if not bill:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=http_status.HTTP_404_NOT_FOUND,
             detail="Bill not found"
         )
     

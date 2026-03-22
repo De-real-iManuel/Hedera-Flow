@@ -195,6 +195,21 @@ def run_schema_migrations():
     except Exception as e:
         print(f"[WARN] Meter backfill skipped: {e}")
 
+    # Migration 010: KMS smart meter keys
+    kms_stmts = [
+        "ALTER TABLE smart_meter_keys ADD COLUMN IF NOT EXISTS kms_key_id VARCHAR(255)",
+        "ALTER TABLE smart_meter_keys ALTER COLUMN private_key_encrypted DROP NOT NULL",
+        "ALTER TABLE smart_meter_keys ALTER COLUMN encryption_iv DROP NOT NULL",
+    ]
+    for stmt in kms_stmts:
+        try:
+            with engine.connect() as conn:
+                conn.execute(text(stmt))
+                conn.commit()
+        except Exception as e:
+            print(f"[WARN] KMS migration skipped ({stmt[:60]}): {e}")
+    print("[OK] KMS smart meter migration applied")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
