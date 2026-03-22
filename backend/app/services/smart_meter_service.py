@@ -309,7 +309,14 @@ class SmartMeterService:
         kms_key_id = row[0] if row else None
         algorithm = row[1] if row else "ED25519"
 
-        message = f"{meter_id}{consumption_kwh}{timestamp}".encode()
+        import json as _json
+        # KMS signs json.dumps(data, sort_keys=True) — must match exactly
+        if self._kms_available and kms_key_id:
+            data = {"consumption_kwh": consumption_kwh, "meter_id": meter_id, "timestamp": timestamp}
+            message = _json.dumps(data, sort_keys=True).encode()
+        else:
+            message = f"{meter_id}{consumption_kwh}{timestamp}".encode()
+
         digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
         digest.update(message)
         message_hash_hex = digest.finalize().hex()
