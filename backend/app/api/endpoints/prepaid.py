@@ -1254,6 +1254,7 @@ async def get_token_receipt(
         # Convert token to dict for receipt service
         token_data = {
             'token_id': token.token_id,
+            'sts_token': token.sts_token,
             'amount_paid_fiat': float(token.amount_paid_fiat),
             'amount_paid_hbar': float(token.amount_paid_hbar) if token.amount_paid_hbar else None,
             'amount_paid_usdc': float(token.amount_paid_usdc) if token.amount_paid_usdc else None,
@@ -1354,6 +1355,7 @@ async def email_token_receipt(
         # Convert token to dict for receipt service
         token_data = {
             'token_id': token.token_id,
+            'sts_token': token.sts_token,
             'amount_paid_fiat': float(token.amount_paid_fiat),
             'amount_paid_hbar': float(token.amount_paid_hbar) if token.amount_paid_hbar else None,
             'amount_paid_usdc': float(token.amount_paid_usdc) if token.amount_paid_usdc else None,

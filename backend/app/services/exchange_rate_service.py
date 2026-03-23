@@ -190,14 +190,24 @@ class ExchangeRateService:
             
         except (httpx.HTTPStatusError, httpx.TimeoutException, httpx.ConnectError) as e:
             logger.warning(f"CoinGecko API unavailable: {e}")
-            # Use fallback mock prices for MVP testing
-            logger.info(f"Using fallback mock price for {currency}")
-            return self._get_mock_price(currency)
+            # Try CoinMarketCap fallback
+            try:
+                logger.info(f"Trying CoinMarketCap fallback for {currency}")
+                return self._fetch_from_coinmarketcap(currency)
+            except Exception as cmc_err:
+                logger.warning(f"CoinMarketCap also unavailable: {cmc_err}")
+                logger.info(f"Using mock price for {currency}")
+                return self._get_mock_price(currency)
         except Exception as e:
             logger.error(f"CoinGecko API error: {e}", exc_info=True)
-            # Use fallback mock prices
-            logger.info(f"Using fallback mock price for {currency}")
-            return self._get_mock_price(currency)
+            # Try CoinMarketCap fallback
+            try:
+                logger.info(f"Trying CoinMarketCap fallback for {currency}")
+                return self._fetch_from_coinmarketcap(currency)
+            except Exception as cmc_err:
+                logger.warning(f"CoinMarketCap also unavailable: {cmc_err}")
+                logger.info(f"Using mock price for {currency}")
+                return self._get_mock_price(currency)
     
     def _get_mock_price(self, currency: str) -> float:
         """

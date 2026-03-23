@@ -92,24 +92,15 @@ async def get_exchange_rate(
         
         # Get HBAR price (uses cache if available)
         hbar_price = service.get_hbar_price(currency, use_cache=True)
-        
-        # Get cached rate data for metadata
-        rate_data = service.get_cached_rate(currency)
-        
-        # If not in cache (shouldn't happen since we just fetched), get from DB
-        if not rate_data:
-            db_rate = service.get_latest_rate_from_db(currency)
-            if db_rate:
-                rate_data = db_rate
-            else:
-                # Fallback to minimal response
-                from datetime import datetime, timezone
-                rate_data = {
-                    'currency': currency,
-                    'hbarPrice': hbar_price,
-                    'source': 'coingecko',
-                    'fetchedAt': datetime.now(timezone.utc).isoformat()
-                }
+
+        # Build response from DB (most reliable source after fetch)
+        from datetime import datetime, timezone
+        rate_data = service.get_latest_rate_from_db(currency) or {
+            'currency': currency,
+            'hbarPrice': hbar_price,
+            'source': 'fallback',
+            'fetchedAt': datetime.now(timezone.utc).isoformat()
+        }
         
         logger.info(f"Exchange rate fetched: {currency} = {hbar_price}")
         

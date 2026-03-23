@@ -27,8 +27,8 @@ export interface SmartMeterSimulatorProps {
   autoStart?: boolean;
 }
 
-const TICK_INTERVAL_MS = 5000;
-const TICK_SECONDS = 5;
+const TICK_INTERVAL_MS = 2000;  // poll every 2s
+const TICK_SECONDS = 300;       // each tick = 5 min simulated time → crosses 0.1 kWh threshold quickly
 
 export function SmartMeterSimulator({
   meterId,
@@ -55,7 +55,7 @@ export function SmartMeterSimulator({
   useEffect(() => {
     smartMeterApi.getSimulatorStatus(meterId)
       .then(s => {
-        setState(s);
+        setState(prev => ({ ...prev, ...s }));
         if (s.running) startPolling();
       })
       .catch(() => {/* meter may not have a simulator yet */});
@@ -81,7 +81,7 @@ export function SmartMeterSimulator({
     tickRef.current = setInterval(async () => {
       try {
         const res = await smartMeterApi.tickSimulator(meterId, TICK_SECONDS);
-        setState(res.state);
+        setState(prev => ({ ...prev, ...res.state }));
 
         if (res.auto_logged) {
           const log = res.auto_logged;
@@ -114,7 +114,7 @@ export function SmartMeterSimulator({
     setLoading(true);
     try {
       const s = await smartMeterApi.startSimulator(meterId);
-      setState(s);
+      setState(prev => ({ ...prev, ...s }));
       startPolling();
       toast.success('Smart meter simulation started', {
         description: 'Logs to HCS every 0.1 kWh consumed',
@@ -133,7 +133,7 @@ export function SmartMeterSimulator({
     stopPolling();
     try {
       const s = await smartMeterApi.stopSimulator(meterId);
-      setState(s);
+      setState(prev => ({ ...prev, ...s }));
       toast.info('Smart meter simulation stopped');
     } catch (err) {
       toast.error('Failed to stop simulator');
@@ -169,7 +169,7 @@ export function SmartMeterSimulator({
     setLoading(true);
     try {
       const res = await smartMeterApi.tickSimulator(meterId, TICK_SECONDS);
-      setState(res.state);
+      setState(prev => ({ ...prev, ...res.state }));
       if (res.auto_logged) {
         toast.success('Manually triggered log sent to HCS');
       } else {
@@ -185,7 +185,7 @@ export function SmartMeterSimulator({
   // ------------------------------------------------------------------
   // Derived values
   // ------------------------------------------------------------------
-  const delta = state.current_reading - state.last_logged_reading;
+  const delta = (state.current_reading ?? 1000) - (state.last_logged_reading ?? 1000);
   const progressPct = Math.min((delta / 0.1) * 100, 100);
 
   return (
@@ -219,7 +219,7 @@ export function SmartMeterSimulator({
               <span className="text-sm font-medium">Current Reading</span>
             </div>
             <p className="text-xl font-bold text-blue-900">
-              {state.current_reading.toFixed(3)} kWh
+              {(state.current_reading ?? 1000).toFixed(3)} kWh
             </p>
           </div>
 
@@ -239,7 +239,7 @@ export function SmartMeterSimulator({
               <span className="text-sm font-medium">Total Consumed</span>
             </div>
             <p className="text-xl font-bold text-purple-900">
-              {state.total_consumed.toFixed(3)} kWh
+              {(state.total_consumed ?? 0).toFixed(3)} kWh
             </p>
           </div>
 
@@ -258,7 +258,7 @@ export function SmartMeterSimulator({
         <div className="space-y-2">
           <div className="flex justify-between text-sm">
             <span>Consumption since last log</span>
-            <span>{delta.toFixed(3)} kWh</span>
+            <span>{(delta ?? 0).toFixed(3)} kWh</span>
           </div>
           <Progress value={progressPct} className="h-2" />
           <p className="text-xs text-muted-foreground">

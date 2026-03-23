@@ -63,13 +63,12 @@ export function ConsumptionHistory({ meterId, refreshTrigger }: ConsumptionHisto
       setError(null);
 
       // Load both logs and history analytics
-      const [logsData, historyData] = await Promise.all([
-        smartMeterApi.getConsumptionLogs(meterId, 50, 0),
-        smartMeterApi.getConsumptionHistory(meterId, dateFrom, dateTo),
-      ]);
+      const logsResponse = await smartMeterApi.getConsumptionLogs(meterId, 50);
+      const historyLogs = await smartMeterApi.getConsumptionHistory(meterId, 50);
 
-      setLogs(logsData);
-      setHistory(historyData);
+      setLogs(logsResponse.logs);
+      // History is just the logs array for now — no separate analytics endpoint
+      setHistory({ logs: historyLogs, total: historyLogs.length } as any);
 
     } catch (err) {
       console.error('Failed to load consumption data:', err);

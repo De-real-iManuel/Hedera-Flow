@@ -430,7 +430,7 @@ class SmartMeterService:
                 from app.services.hedera_service import HederaService
                 hedera = HederaService()
                 import json
-                hcs_msg = json.dumps({
+                hcs_result = hedera.log_to_hcs(hcs_topic_id, {
                     "type": "SMART_METER_CONSUMPTION",
                     "meter_id": meter_id,
                     "consumption_kwh": consumption_kwh,
@@ -438,7 +438,6 @@ class SmartMeterService:
                     "signature_valid": True,
                     "log_id": log_id,
                 })
-                hcs_result = hedera.submit_message(hcs_topic_id, hcs_msg)
                 hcs_sequence_number = hcs_result.get("sequence_number")
                 # Persist HCS data
                 self.db.execute(text("""
