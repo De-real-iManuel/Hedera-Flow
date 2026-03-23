@@ -10,58 +10,74 @@ Hedera Flow connects three worlds: **physical meters**, **cloud security (AWS KM
 
 ```mermaid
 graph TB
-    subgraph USER["👤 User (Mobile / Browser)"]
-        A[📱 Take Meter Photo]
-        B[💰 Pay Bill with HBAR/USDC]
-        C[🔑 HashPack / MetaMask Wallet]
+    subgraph CLIENTS["👥 Users & Devices"]
+        A[📱 Web App - Postpaid Scan]
+        B[💳 Web App - Prepaid Dashboard NGN]
+        PM[🔢 Physical Prepaid Meter]
+        IoT[⚡ Smart Meter IoT Device]
     end
 
     subgraph FRONTEND["🌐 Frontend — Vercel"]
-        D[React + TypeScript App]
-        E[Wallet Connect SDK]
+        D[React + TypeScript UI]
     end
 
-    subgraph BACKEND["⚙️ Backend — Railway"]
-        F[FastAPI REST API]
-        G[Auth Service — JWT + bcrypt]
-        H[Fraud Detection Engine]
-        I[Billing Service]
-        J[Prepaid Token Service]
+    subgraph BACKEND["⚙️ Backend — Pure Python gRPC"]
+        F[API Router]
+        H[🛡️ Fraud Engine - GPS/Time Checks]
+        W[Web2.5 Wallet & KMS Manager]
     end
 
     subgraph AWS["🔐 AWS Cloud"]
-        K[AWS KMS — HSM]
-        L[CloudTrail — Audit Log]
-    end
-
-    subgraph HEDERA["⛓️ Hedera Testnet"]
-        M[HCS — Consensus Service]
-        N[HBAR / USDC Payments]
-        O[Mirror Node — Public Verification]
+        K[AWS KMS — HSM ED25519]
+        L[CloudTrail — Audit Logs]
     end
 
     subgraph EXTERNAL["🌍 External Services"]
         P[Google Vision OCR]
-        Q[PostgreSQL Database]
+        Q[Supabase PostgreSQL]
+        R[📦 IPFS / Web3 Storage]
+        S[CoinGecko Price Oracle]
     end
 
-    A --> D
-    B --> E
-    C --> E
+    subgraph HEDERA["⛓️ Hedera Testnet"]
+        M[HCS — Immutable Audit Trail]
+        N[HTS / EVM — Token Settlement]
+        O[Hashscan / Mirror Node]
+    end
+
+    %% Client Connections
+    A -->|Postpaid Scan| D
+    B -->|Prepaid Buy| D
+    IoT -->|Auto-Consumption Payload| F
+
     D --> F
-    E --> F
-    F --> G
-    F --> H
-    F --> I
-    F --> J
-    H --> P
-    H --> K
-    K --> L
-    K --> M
-    I --> N
-    J --> N
-    F --> Q
+
+    %% Backend Routing
+    F -->|Fetch Live Rates| S
+    F -->|Store Users and Readings| Q
+    F -->|Route Postpaid| H
+    
+    %% Postpaid/Legacy Flow
+    H -->|Extract Text| P
+    H -->|Pin Raw Image| R
+    H -->|Verified Hash and IPFS CID| M
+
+    %% KMS / Smart Meter / Web2.5 Flow
+    F -->|Route IoT and Web2.5| W
+    W -->|Request KMS Signature| K
+    K -->|Log operations| L
+    W -->|KMS ED25519 Signature| M
+    
+    %% Prepaid Flow
+    W -->|Execute Fiat to Crypto Payment| N
+    N -->|Generate Credit Token| PM
+
+    %% Public Verification
     M --> O
+    N --> O
+
+
+
 ```
 
 ---
@@ -77,36 +93,70 @@ sequenceDiagram
     participant API as ⚙️ FastAPI Backend
     participant OCR as 👁️ Google Vision
     participant Fraud as 🛡️ Fraud Engine
-    participant KMS as 🔐 AWS KMS (HSM)
+    participant IPFS as 📦 IPFS / Web3 Storage
     participant HCS as ⛓️ Hedera HCS
 
-    User->>App: Takes photo of meter
-    App->>App: Captures GPS + timestamp
+    User->>App: Takes live photo of meter
+    App->>App: Captures GPS + timestamp (Gallery Upload Blocked)
     App->>API: POST /api/verify/scan (image + GPS + meter_id)
 
     API->>OCR: Send image for text extraction
     OCR-->>API: Returns reading: 245.7 kWh (confidence: 95%)
 
     API->>Fraud: Run fraud checks
-    Note over Fraud: GPS within 50m? ✅<br/>Timestamp fresh? ✅<br/>Image manipulated? ❌<br/>Reading in normal range? ✅
+    Note over Fraud: GPS within 50m? ✅<br/>Timestamp fresh? ✅<br/>Reading in normal range? ✅
     Fraud-->>API: fraud_score: 0.17 (PROCEED)
 
-    API->>KMS: sign(consumption_data, meter_key_id)
-    Note over KMS: Private key NEVER leaves HSM<br/>Only signature is returned
-    KMS-->>API: ECDSA signature (secp256k1)
+    API->>IPFS: Upload raw meter image
+    Note over IPFS: Decentralized pin
+    IPFS-->>API: Returns Image Hash (CID)
 
-    API->>HCS: Submit signed message to regional topic
-    Note over HCS: Topic: 0.0.8052391 (Africa)<br/>Sequence #: 1234567<br/>Consensus timestamp: immutable
+    API->>HCS: Submit verified reading + IPFS CID to regional topic
+    Note over HCS: Topic: 0.0.8052391 (Africa)<br/>Consensus timestamp: immutable
     HCS-->>API: sequence_number: 1234567
 
     API-->>App: ✅ Verified — HCS sequence: 1234567
-    App-->>User: "Reading verified on blockchain"
-    Note over User: Can view proof at hashscan.io
+    App-->>User: "Reading & Image verified on blockchain"
+    Note over User: Can view proof + image via IPFS CID
+
 ```
+---
+
+## 3. Smart Meter & AWS KMS Verification Flow
+
+For smart meters that lack secure hardware, Hedera Flow abstracts key management by securely signing consumption data using AWS KMS. Our pure Python backend then routes this KMS-signed payload directly to the Hedera Consensus Service (HCS). This creates an automated, tamper-proof billing trail for IoT infrastructure without exposing private keys.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Meter as ⚡ Smart Meter (IoT)
+    participant API as ⚙️ Pure gRPC Backend
+    participant KMS as 🔐 AWS KMS (HSM)
+    participant HCS as ⛓️ Hedera HCS
+
+    Note over Meter,API: 1. Automated Data Transmission
+    Meter->>API: POST /smart-meter/consume <br/> (meter_id: NG-772, usage: 0.5 kWh)
+    
+    Note over API,KMS: 2. Hardware-Secured Identity
+    API->>KMS: sign(payload_hash, ED25519_key_id)
+    Note over KMS: Private key NEVER leaves HSM<br/>Generates deterministic signature
+    KMS-->>API: Cryptographic Signature (ED25519)
+
+    Note over API,HCS: 3. Pure gRPC On-Chain Logging
+    API->>API: Pack raw Protobufs (bypassing heavy SDKs)
+    API->>HCS: Submit signed payload to regional Topic ID
+    Note over HCS: Topic: 0.0.8052391 (Africa)<br/>Creates Immutable Device Audit Trail
+    HCS-->>API: sequence_number: 1234568
+
+    Note over API,Meter: 4. Confirmation
+    API-->>Meter: ✅ Logged — HCS sequence: 1234568
+
+```
+
 
 ---
 
-## 3. AWS KMS Signing Flow (Detailed)
+## 4. AWS KMS Signing Flow (Detailed)
 
 This is the security core — how we ensure private keys never touch application memory.
 
@@ -118,30 +168,29 @@ sequenceDiagram
     participant HCS as ⛓️ Hedera HCS
 
     Note over App,KMS: Key Creation (once per meter)
-    App->>KMS: create_key(KeySpec=ECC_SECG_P256K1, KeyUsage=SIGN_VERIFY)
+    App->>KMS: create_key(KeySpec=ECC_ED25519, KeyUsage=SIGN_VERIFY)
     KMS-->>App: key_id, key_arn, public_key
     Note over KMS: Private key generated INSIDE HSM<br/>Never exported, never stored in DB
 
     Note over App,KMS: Signing a Meter Reading
     App->>App: Build consumption_data JSON
-    App->>App: Hash data with SHA-256
     App->>KMS: sign(KeyId=meter_key_id, Message=data, MessageType=RAW)
     Note over KMS: Signs inside hardware vault<br/>FIPS 140-2 Level 3
-    KMS-->>App: ECDSA signature bytes
+    KMS-->>App: ED25519 signature bytes
     KMS->>CT: Log: Sign operation, key_id, caller, timestamp
 
     App->>HCS: Submit {data + signature + kms_key_id}
     HCS-->>App: sequence_number (immutable proof)
 
     Note over App,CT: Audit Trail
-    App->>KMS: get_key_audit_trail(key_id)
-    KMS->>CT: Query CloudTrail events
+    App->>CT: query_events(EventName=Sign, Resource=key_id)
     CT-->>App: All sign/verify operations with timestamps
+
 ```
 
 ---
 
-## 4. Payment Flow (HBAR / USDC)
+## 5. Payment Flow (HBAR / USDC)
 
 ```mermaid
 sequenceDiagram
@@ -174,7 +223,7 @@ sequenceDiagram
 
 ---
 
-## 5. Authentication Flow
+## 6. Authentication Flow
 
 ```mermaid
 sequenceDiagram
@@ -211,7 +260,7 @@ sequenceDiagram
 
 ---
 
-## 6. Database Schema (Key Tables)
+## 7. Database Schema (Key Tables)
 
 ```mermaid
 erDiagram
@@ -281,7 +330,7 @@ erDiagram
 
 ---
 
-## 7. Fraud Detection Decision Tree
+## 8. Fraud Detection Decision Tree
 
 ```mermaid
 flowchart TD
@@ -311,7 +360,7 @@ flowchart TD
 
 ---
 
-## 8. Regional HCS Topic Routing
+## 9. Regional HCS Topic Routing
 
 ```mermaid
 flowchart LR
