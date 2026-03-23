@@ -187,9 +187,28 @@ This system cannot work on Web2 alone because utilities control the database —
 
 ### Post-Hackathon Roadmap
 
-- **2026**: 500-user pilot (Port Harcourt)
-- **Late 2026**: Omnichain payments via ZetaChain
-- **2027**: Hardware adapter 
+Hedera Flow V1 successfully established the core trust layer—bridging legacy meters to Hedera HCS via AI-OCR and abstracting smart meter identity via AWS KMS. 
+
+Our subsequent phases will transition this infrastructure from a consumer verification tool into a comprehensive Web3 energy ecosystem, targeting both decentralized finance (DeFi) integration and B2B utility infrastructure.
+
+### Phase 2: DeFi Integration & B2B SaaS 
+**1. "Self-Paying" Prepaid Energy (DeFi Layer)**
+* **Concept:** Currently, prepaid energy traps consumer liquidity. In V2, user prepayments (USDC/NGN) will be routed into a Hedera Smart Contract connected to a DeFi yield protocol (e.g., SaucerSwap).
+* **Execution:** Funds earn APY while waiting to be consumed. As the meter dynamically reports usage via our pure gRPC backend, the exact fraction of funds is routed to the DisCo. The accumulated yield subsidizes the user's future electricity bills.
+
+**2. AI-Powered "Energy Theft" Detection (B2B SaaS Layer)**
+* **Concept:** Utilities lose billions annually to physical meter bypasses. We will leverage the massive, immutable data stream flowing into our Supabase/HCS architecture to build a revenue-protection engine.
+* **Execution:** An AWS SageMaker machine learning model will analyze neighborhood-wide consumption patterns. If a node cryptographically reports zero usage while the regional grid load remains high, the dashboard flags a "Probable Bypass" for the utility company, transforming Hedera Flow into an essential B2B SaaS tool.
+
+### Phase 3: Hardware Abstraction & Network Scaling
+**3. The $10 "Dumb-to-Smart" IoT Retrofit (Hardware Layer)**
+* **Concept:** Removing the human element from legacy meter scanning without waiting for expensive, utility-mandated smart meter rollouts.
+* **Execution:** Deployment of an ultra-low-cost ($10) ESP32 micro-camera module that physically attaches to legacy analog meters. Running lightweight Edge AI, it autonomously reads the screen and pings AWS IoT Core via cellular. The payload is signed by AWS KMS and anchored to Hedera HCS, instantly upgrading analog infrastructure into autonomous Web3 nodes.
+
+**4. "Proof-of-Uptime" Tokenomics ($FLOW Network Layer)**
+* **Concept:** Crowdsourcing a real-time, decentralized map of grid stability and power outages.
+* **Execution:** Introduction of the native ecosystem token. Nodes (users or autonomous devices) earn micro-rewards for successful hourly pings. This creates a highly accurate, real-time map of exactly which neighborhoods have power and which are experiencing blackouts—data that can be monetized and sold to third-party researchers, governments, and infrastructure developers.
+
 
 ---
 
