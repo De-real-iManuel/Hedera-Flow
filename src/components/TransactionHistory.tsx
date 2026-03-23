@@ -387,18 +387,34 @@ export function TransactionHistory({
                       <div>
                         <p className="text-muted-foreground">Transaction</p>
                         {transaction.hedera_tx_id ? (
-                          <Button
-                            variant="link"
-                            size="sm"
-                            className="p-0 h-auto text-blue-600"
-                            onClick={() => window.open(
-                              `https://hashscan.io/testnet/transaction/${transaction.hedera_tx_id}`,
-                              '_blank'
+                          <div className="flex flex-col gap-1">
+                            <Button
+                              variant="link"
+                              size="sm"
+                              className="p-0 h-auto text-blue-600 justify-start"
+                              onClick={() => window.open(
+                                `https://hashscan.io/testnet/transaction/${transaction.hedera_tx_id}`,
+                                '_blank'
+                              )}
+                            >
+                              <ExternalLink className="w-3 h-3 mr-1" />
+                              View Transaction
+                            </Button>
+                            {transaction.hcs_topic_id && transaction.hcs_sequence_number && (
+                              <Button
+                                variant="link"
+                                size="sm"
+                                className="p-0 h-auto text-purple-600 justify-start"
+                                onClick={() => window.open(
+                                  `https://hashscan.io/testnet/topic/${transaction.hcs_topic_id}?p=1&k=${transaction.hcs_sequence_number}`,
+                                  '_blank'
+                                )}
+                              >
+                                <ExternalLink className="w-3 h-3 mr-1" />
+                                View HCS Message
+                              </Button>
                             )}
-                          >
-                            <ExternalLink className="w-3 h-3 mr-1" />
-                            View on HashScan
-                          </Button>
+                          </div>
                         ) : (
                           <p className="text-sm text-muted-foreground">Pending</p>
                         )}

@@ -67,8 +67,29 @@ export function ConsumptionHistory({ meterId, refreshTrigger }: ConsumptionHisto
       const historyLogs = await smartMeterApi.getConsumptionHistory(meterId, 50);
 
       setLogs(logsResponse.logs);
-      // History is just the logs array for now — no separate analytics endpoint
-      setHistory({ logs: historyLogs, total: historyLogs.length } as any);
+      
+      // Calculate analytics from logs
+      if (historyLogs.length > 0) {
+        const totalConsumption = historyLogs.reduce((sum, log) => sum + log.consumption_kwh, 0);
+        const peakConsumption = Math.max(...historyLogs.map(log => log.consumption_kwh));
+        const daysDiff = Math.max(1, Math.ceil((new Date(dateTo).getTime() - new Date(dateFrom).getTime()) / (1000 * 60 * 60 * 24)));
+        const averageDaily = totalConsumption / daysDiff;
+        
+        // Estimate cost (this should ideally come from tariff data)
+        const estimatedCostPerKwh = 0.15; // Default rate
+        const totalCost = totalConsumption * estimatedCostPerKwh;
+        
+        setHistory({
+          logs: historyLogs,
+          total: historyLogs.length,
+          total_consumption: totalConsumption,
+          average_daily: averageDaily,
+          peak_consumption: peakConsumption,
+          total_cost: totalCost,
+        });
+      } else {
+        setHistory(null);
+      }
 
     } catch (err) {
       console.error('Failed to load consumption data:', err);
@@ -190,7 +211,7 @@ export function ConsumptionHistory({ meterId, refreshTrigger }: ConsumptionHisto
                   <span className="text-sm font-medium">Total Consumption</span>
                 </div>
                 <p className="text-2xl font-bold text-blue-900">
-                  {history.total_consumption.toFixed(2)} kWh
+                  {history.total_consumption?.toFixed(2) || '0.00'} kWh
                 </p>
               </div>
               
@@ -200,7 +221,7 @@ export function ConsumptionHistory({ meterId, refreshTrigger }: ConsumptionHisto
                   <span className="text-sm font-medium">Daily Average</span>
                 </div>
                 <p className="text-2xl font-bold text-green-900">
-                  {history.average_daily.toFixed(2)} kWh
+                  {history.average_daily?.toFixed(2) || '0.00'} kWh
                 </p>
               </div>
               
@@ -210,7 +231,7 @@ export function ConsumptionHistory({ meterId, refreshTrigger }: ConsumptionHisto
                   <span className="text-sm font-medium">Peak Usage</span>
                 </div>
                 <p className="text-2xl font-bold text-orange-900">
-                  {history.peak_consumption.toFixed(3)} kWh
+                  {history.peak_consumption?.toFixed(3) || '0.000'} kWh
                 </p>
               </div>
               
@@ -220,7 +241,7 @@ export function ConsumptionHistory({ meterId, refreshTrigger }: ConsumptionHisto
                   <span className="text-sm font-medium">Total Cost</span>
                 </div>
                 <p className="text-2xl font-bold text-purple-900">
-                  ${history.total_cost.toFixed(2)}
+                  ${history.total_cost?.toFixed(2) || '0.00'}
                 </p>
               </div>
             </div>
@@ -334,19 +355,17 @@ export function ConsumptionHistory({ meterId, refreshTrigger }: ConsumptionHisto
                       </div>
                       
                       <div className="flex flex-col gap-2 ml-4">
-                        {log.hcs_sequence_number && (
+                        {log.hcs_topic_id && log.hcs_sequence_number && (
                           <Button
                             variant="outline"
                             size="sm"
                             onClick={() => {
-                              // In a real implementation, this would link to Hedera Mirror Node
-                              toast.info('Blockchain verification', {
-                                description: `HCS Sequence: ${log.hcs_sequence_number}`,
-                              });
+                              const hashscanUrl = `https://hashscan.io/testnet/topic/${log.hcs_topic_id}?p=1&k=${log.hcs_sequence_number}`;
+                              window.open(hashscanUrl, '_blank');
                             }}
                           >
                             <ExternalLink className="w-3 h-3 mr-1" />
-                            HCS
+                            HashScan
                           </Button>
                         )}
                         

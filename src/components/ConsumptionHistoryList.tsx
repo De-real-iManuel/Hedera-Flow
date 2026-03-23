@@ -304,9 +304,26 @@ export function ConsumptionHistoryList({
                           {/* HCS Information */}
                           {log.hcs_sequence_number && (
                             <div className="pt-2 border-t border-gray-200">
-                              <div className="flex items-center justify-between text-xs text-muted-foreground">
-                                <span>HCS Sequence:</span>
-                                <span className="font-mono">#{log.hcs_sequence_number}</span>
+                              <div className="flex items-center justify-between text-xs">
+                                <span className="text-muted-foreground">HCS Sequence:</span>
+                                <div className="flex items-center gap-2">
+                                  <span className="font-mono">#{log.hcs_sequence_number}</span>
+                                  {log.hcs_topic_id && (
+                                    <Button
+                                      variant="link"
+                                      size="sm"
+                                      className="p-0 h-auto text-blue-600"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        const hashscanUrl = `https://hashscan.io/testnet/topic/${log.hcs_topic_id}?p=1&k=${log.hcs_sequence_number}`;
+                                        window.open(hashscanUrl, '_blank');
+                                      }}
+                                    >
+                                      <ExternalLink className="w-3 h-3 mr-1" />
+                                      HashScan
+                                    </Button>
+                                  )}
+                                </div>
                               </div>
                             </div>
                           )}
