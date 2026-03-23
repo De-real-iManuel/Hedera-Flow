@@ -10,6 +10,8 @@
   [![Frontend](https://img.shields.io/badge/Frontend-Vercel-black)](https://hedera-flow-ivory.vercel.app)
   [![HCS Topic](https://img.shields.io/badge/Hedera%20HCS-0.0.8052391-00D4AA)](https://hashscan.io/testnet/topic/0.0.8052391)
   [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
+
+  ###  [View Pitch Deck](docs/Hedera%20Flow%20-%20Tokenizing%20Trust%20for%20Electricity%20Billing%20(1).pdf)
 </div>
 
 ---
@@ -18,7 +20,7 @@
 
 | Document | Description |
 |----------|-------------|
-| [📋 PRD](docs/PRD.md) | Product Requirements Document — goals, user stories, success metrics |
+| [📋 PRD](docs/PRD.md) | Product Requirements Document — goals, user stories, success metrics | 
 | [🏛️ Architecture](docs/ARCHITECTURE.md) | System design, component breakdown, and technical decisions |
 
 ---
