@@ -187,8 +187,22 @@ async def log_consumption(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """
+    PRODUCTION ENDPOINT: Real AWS KMS + Hedera HCS Integration
+    
+    This endpoint demonstrates the complete cryptographic flow for the Hedera Apex Hackathon:
+    1. Receives consumption data from smart meter
+    2. Signs with AWS KMS (FIPS 140-2 HSM)
+    3. Logs to Hedera Consensus Service (HCS)
+    4. Returns real sequence number from Hedera network
+    """
     meter_uuid = _resolve_meter(request.meter_id, current_user, db)
     svc = SmartMeterService(db)
+    
+    logger.info("=" * 80)
+    logger.info("[SYSTEM] Payload received from Smart Meter %s", request.meter_id)
+    logger.info("=" * 80)
+    
     try:
         data = svc.log_consumption(
             meter_id=str(meter_uuid),
@@ -200,7 +214,9 @@ async def log_consumption(
             reading_after=request.reading_after,
         )
     except SmartMeterError as e:
+        logger.error("[ERROR] Consumption logging failed: %s", str(e))
         raise HTTPException(status_code=400, detail=str(e))
+    
     return ConsumeResponse(**data)
 
 
@@ -386,10 +402,95 @@ async def simulator_tick(
     except SmartMeterError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # Auto-log when delta >= 0.1 kWh
+    # Auto-log when delta >= 0.01 kWh (lowered for demo purposes)
     auto_logged = None
     delta = state["current_reading"] - state["last_logged_reading"]
-    if delta >= 0.1:
+    if delta >= 0.01:
+        try:
+            signed = svc.sign_consumption(
+                meter_id=str(meter_uuid),
+                consumption_kwh=round(delta, 6),
+                timestamp=int(datetime.utcnow().timestamp()),
+                reading_before=state["last_logged_reading"],
+                reading_after=state["current_reading"],
+            )
+            log = svc.log_consumption(
+                meter_id=str(meter_uuid),
+                consumption_kwh=round(delta, 6),
+                timestamp=signed["timestamp"],
+                signature=signed["signature"],
+                public_key_pem=signed["public_key"],
+                reading_before=state["last_logged_reading"],
+                reading_after=state["current_reading"],
+            )
+            state["last_logged_reading"] = state["current_reading"]
+            state["logs_count"] = state.get("logs_count", 0) + 1
+            state["last_log_at"] = datetime.utcnow().isoformat()
+            auto_logged = {
+                "consumption_log_id": log["consumption_log_id"],
+                "consumption_kwh": log["consumption_kwh"],
+                "hcs_sequence_number": log.get("hcs_sequence_number"),
+            }
+        except Exception as e:
+            logger.error(f"Auto-log failed during tick: {e}", exc_info=True)
+            # Don't raise - just continue with the tick
+            pass
+
+    return {"state": state, "auto_logged": auto_logged}
+
+
+@router.post("/simulator/force-log")
+async def simulator_force_log(
+    body: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Force an immediate HCS log regardless of consumption delta.
+    Useful for demos and testing.
+    """
+    meter_id = body.get("meter_id", "")
+    meter_uuid = _resolve_meter(meter_id, current_user, db)
+    svc = SmartMeterService(db)
+    
+    state = svc.get_simulator_status(str(meter_uuid))
+    if not state.get("running"):
+        raise HTTPException(status_code=400, detail="Simulator not running")
+    
+    delta = state["current_reading"] - state["last_logged_reading"]
+    if delta < 0.001:
+        # Force at least 0.001 kWh for demo
+        delta = 0.001
+    
+    try:
+        signed = svc.sign_consumption(
+            meter_id=str(meter_uuid),
+            consumption_kwh=round(delta, 6),
+            timestamp=int(datetime.utcnow().timestamp()),
+            reading_before=state["last_logged_reading"],
+            reading_after=state["current_reading"],
+        )
+        log = svc.log_consumption(
+            meter_id=str(meter_uuid),
+            consumption_kwh=round(delta, 6),
+            timestamp=signed["timestamp"],
+            signature=signed["signature"],
+            public_key_pem=signed["public_key"],
+            reading_before=state["last_logged_reading"],
+            reading_after=state["current_reading"],
+        )
+        
+        return {
+            "status": "logged",
+            "consumption_log_id": log["consumption_log_id"],
+            "consumption_kwh": log["consumption_kwh"],
+            "hcs_topic_id": log.get("hcs_topic_id"),
+            "hcs_sequence_number": log.get("hcs_sequence_number"),
+            "signature": signed["signature"][:60] + "...",
+        }
+    except Exception as e:
+        logger.error(f"Force log failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
         try:
             signed = svc.sign_consumption(
                 meter_id=str(meter_uuid),

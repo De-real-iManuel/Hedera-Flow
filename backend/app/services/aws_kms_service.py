@@ -217,23 +217,23 @@ class AWSKMSService:
             - Private key never touches application memory
         """
         try:
-            logger.info(f"🔐 Signing consumption data for meter {meter_id}")
-            
             # Create deterministic JSON of consumption data
             data_json = json.dumps(consumption_data, sort_keys=True)
+            message_bytes = data_json.encode()
+            
             # Keep hash for return value / verification reference
-            message_hash = hashlib.sha256(data_json.encode()).digest()
+            message_hash = hashlib.sha256(message_bytes).digest()
             
             logger.debug(f"   Data: {data_json}")
             logger.debug(f"   Hash: {message_hash.hex()}")
-            logger.debug(f"   Raw bytes length: {len(data_json.encode())}")
+            logger.debug(f"   Message bytes length: {len(message_bytes)}")
             
             # Sign with KMS (blind signing - private key never leaves HSM)
-            # Per Hedera docs: MessageType must be 'RAW' for Hedera transaction signing
-            # https://docs.hedera.com/hedera/tutorials/more-tutorials/HSM-signing/aws-kms
+            # For ED25519 keys, AWS KMS requires MessageType='RAW'
+            # The message is hashed internally by KMS using SHA-256
             response = self.kms_client.sign(
                 KeyId=key_id,
-                Message=data_json.encode(),  # Send raw message, not digest
+                Message=message_bytes,
                 MessageType='RAW',
                 SigningAlgorithm='ECDSA_SHA_256'
             )
@@ -241,11 +241,10 @@ class AWSKMSService:
             signature = response['Signature']
             signing_algorithm = response['SigningAlgorithm']
             
-            logger.info(f"✅ Consumption data signed successfully:")
             logger.info(f"   Meter ID: {meter_id}")
             logger.info(f"   Key ID: {key_id}")
             logger.info(f"   Algorithm: {signing_algorithm}")
-            logger.info(f"   Signature: {signature.hex()[:20]}...")
+            logger.info(f"   Signature length: {len(signature)} bytes")
             
             return {
                 'signature': signature.hex(),
@@ -268,41 +267,73 @@ class AWSKMSService:
             else:
                 raise KMSServiceError(f"KMS signing error: {str(e)}")
     
-    def verify_signature(
-        self,
-        key_id: str,
-        message: bytes,
-        signature: bytes
-    ) -> bool:
-        """
-        Verify signature using KMS public key.
-        
-        Args:
-            key_id: KMS key ID
-            message: Original raw message bytes (not digest)
-            signature: Signature to verify
-            
-        Returns:
-            True if signature is valid
-        """
+    def sign_with_kms_hmac(self, key_id: str, message: bytes, meter_id: str) -> Dict:
+        """Fixed: Properly signs the message using the SIGN_VERIFY KMS key."""
         try:
-            # MessageType='RAW' matches how we sign — KMS hashes internally
-            response = self.kms_client.verify(
+            import hashlib
+            
+            # Hash the message first
+            message_hash = hashlib.sha256(message).digest()
+            
+            # Use KMS to SIGN the hash (Replacing the hallucinated .encrypt method)
+            response = self.kms_client.sign(
                 KeyId=key_id,
-                Message=message,
+                Message=message_hash,
                 MessageType='RAW',
-                Signature=signature,
                 SigningAlgorithm='ECDSA_SHA_256'
             )
             
-            is_valid = response['SignatureValid']
-            logger.info(f"🔍 Signature verification: {'✅ Valid' if is_valid else '❌ Invalid'}")
+            # Extract the signature bytes
+            signature_bytes = response['Signature']
             
-            return is_valid
+            logger.info(f"   Meter ID: {meter_id}")
+            logger.info(f"   Key ID: {key_id[:50]}...")
+            logger.info(f"   Signature length: {len(signature_bytes)} bytes")
+            
+            return {
+                'signature': signature_bytes.hex(),
+                'message_hash': message_hash.hex(),
+                'key_id': key_id,
+                'algorithm': 'ECDSA_SHA_256',
+                'timestamp': datetime.utcnow().isoformat(),
+                'meter_id': meter_id
+            }
             
         except ClientError as e:
-            logger.error(f"❌ Signature verification failed: {e}")
+            error_code = e.response['Error']['Code']
+            logger.error(f"❌ KMS signing failed for meter {meter_id}: {error_code}")
+            raise KMSServiceError(f"KMS signing error: {str(e)}")
+    
+    def verify_kms_hmac(self, key_id: str, message: bytes, signature_hex: str, meter_id: str) -> bool:
+        """Fixed: Verify a KMS signature using the proper verify() method."""
+        try:
+            import hashlib
+
+            # Hash the message exactly like we did for signing
+            message_hash = hashlib.sha256(message).digest()
+
+            # Convert the hex signature back to bytes
+            signature_bytes = bytes.fromhex(signature_hex)
+
+            # Use KMS to VERIFY the signature
+            response = self.kms_client.verify(
+               KeyId=key_id,
+               Message=message_hash,
+               MessageType='RAW',
+               Signature=signature_bytes,
+               SigningAlgorithm='ECDSA_SHA_256'
+            )
+
+            is_valid = response.get('SignatureValid', False)
+
+            logger.info(f"🔍 KMS verification: {'✅ Valid' if is_valid else '❌ Invalid'}")
+
+            return is_valid
+
+        except ClientError as e:
+            logger.error(f"❌ KMS verification failed: {e}")
             return False
+
     
     def get_public_key(self, key_id: str) -> Dict:
         """

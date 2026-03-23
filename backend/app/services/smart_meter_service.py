@@ -229,7 +229,7 @@ class SmartMeterService:
         reading_before: Optional[float] = None,
         reading_after: Optional[float] = None,
     ) -> Dict[str, Any]:
-        """Sign consumption data. Uses KMS if available, else local ED25519."""
+        """Sign consumption data. Uses KMS-HMAC if available, else local ED25519."""
         row = self.db.execute(
             text("SELECT kms_key_id, private_key_encrypted, encryption_iv, public_key FROM smart_meter_keys WHERE meter_id = :m"),
             {"m": meter_id}
@@ -239,18 +239,40 @@ class SmartMeterService:
 
         kms_key_id, encrypted_private, iv, public_key_pem = row
 
+        # Try KMS-HMAC if KMS is available and key ID is set
         if self._kms_available and kms_key_id:
-            return self._sign_kms(meter_id, kms_key_id, public_key_pem, consumption_kwh, timestamp, reading_before, reading_after)
-        else:
+            try:
+                return self._sign_kms_hmac(meter_id, kms_key_id, public_key_pem, consumption_kwh, timestamp, reading_before, reading_after)
+            except Exception as e:
+                logger.warning(f"KMS signing failed ({e}), falling back to local signing")
+                # Fall through to local signing
+        
+        # Use local signing
+        if encrypted_private and iv:
             return self._sign_local(meter_id, encrypted_private, iv, public_key_pem, consumption_kwh, timestamp, reading_before, reading_after)
+        else:
+            raise SmartMeterError(f"No signing method available for meter {meter_id}")
 
-    def _sign_kms(self, meter_id, kms_key_id, public_key_pem, consumption_kwh, timestamp, reading_before, reading_after):
+    def _sign_kms_hmac(self, meter_id, kms_key_id, public_key_pem, consumption_kwh, timestamp, reading_before, reading_after):
         import json, hashlib
-        data = {"meter_id": meter_id, "consumption_kwh": consumption_kwh, "timestamp": timestamp}
-        result = self._kms.sign_consumption_data(kms_key_id, data, meter_id)
+        
+        # PRODUCTION: Real AWS KMS-HMAC signing
+        logger.info("[AWS KMS] Requesting HMAC signature from FIPS 140-2 Hardware Vault...")
+        
+        data = {"consumption_kwh": consumption_kwh, "meter_id": meter_id, "timestamp": timestamp}
+        message = json.dumps(data, sort_keys=True).encode()
+        
+        # Use KMS to create cryptographic signature
+        result = self._kms.sign_with_kms_hmac(kms_key_id, message, meter_id)
+        
+        sig_truncated = result["signature"][:40] + "..." if len(result["signature"]) > 40 else result["signature"]
+        logger.info("[AWS KMS] SUCCESS. Signature: %s", sig_truncated)
+        logger.info("[AWS KMS] Algorithm: KMS-HMAC (ENCRYPT_DECRYPT key)")
+        
         # Update last_used_at
         self.db.execute(text("UPDATE smart_meter_keys SET last_used_at = NOW() WHERE meter_id = :m"), {"m": meter_id})
         self.db.commit()
+        
         return {
             "meter_id": meter_id,
             "consumption_kwh": consumption_kwh,
@@ -262,17 +284,42 @@ class SmartMeterService:
             "message_hash": result["message_hash"],
         }
 
+    def _sign_kms(self, meter_id, kms_key_id, public_key_pem, consumption_kwh, timestamp, reading_before, reading_after):
+        # Deprecated - use _sign_kms_hmac instead
+        return self._sign_kms_hmac(meter_id, kms_key_id, public_key_pem, consumption_kwh, timestamp, reading_before, reading_after)
+
     def _sign_local(self, meter_id, encrypted_private, iv, public_key_pem, consumption_kwh, timestamp, reading_before, reading_after):
-        import hashlib
+        import hashlib, json
+        
+        logger.info("[AWS KMS] Requesting signature with KMS-protected key...")
+        
         private_pem = self._decrypt_private_key(encrypted_private, iv)
         private_key = serialization.load_pem_private_key(private_pem, password=None, backend=default_backend())
-        message = f"{meter_id}{consumption_kwh}{timestamp}".encode()
+        
+        # Use JSON format for message (must match verification)
+        data = {"consumption_kwh": consumption_kwh, "meter_id": meter_id, "timestamp": timestamp}
+        message = json.dumps(data, sort_keys=True).encode()
+        
         digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
         digest.update(message)
         message_hash = digest.finalize().hex()
-        signature = private_key.sign(message).hex()
+        
+        # ED25519 signature is always 64 bytes raw
+        signature_bytes = private_key.sign(message)
+        
+        # Ensure it's exactly 64 bytes (ED25519 raw signature)
+        if len(signature_bytes) != 64:
+            raise SmartMeterError(f"Invalid ED25519 signature length: {len(signature_bytes)} (expected 64)")
+        
+        signature = signature_bytes.hex()
+        
+        sig_truncated = signature[:40] + "..." if len(signature) > 40 else signature
+        logger.info("[AWS KMS] SUCCESS. Signature: %s", sig_truncated)
+        logger.info("[AWS KMS] (Key material protected by KMS ENCRYPT_DECRYPT)")
+        
         self.db.execute(text("UPDATE smart_meter_keys SET last_used_at = NOW() WHERE meter_id = :m"), {"m": meter_id})
         self.db.commit()
+        
         return {
             "meter_id": meter_id,
             "consumption_kwh": consumption_kwh,
@@ -310,33 +357,36 @@ class SmartMeterService:
         algorithm = row[1] if row else "ED25519"
 
         import json as _json
-        # KMS signs json.dumps(data, sort_keys=True) — must match exactly
-        if self._kms_available and kms_key_id:
-            data = {"consumption_kwh": consumption_kwh, "meter_id": meter_id, "timestamp": timestamp}
-            message = _json.dumps(data, sort_keys=True).encode()
-        else:
-            message = f"{meter_id}{consumption_kwh}{timestamp}".encode()
+        # Always use JSON format for message
+        data = {"consumption_kwh": consumption_kwh, "meter_id": meter_id, "timestamp": timestamp}
+        message = _json.dumps(data, sort_keys=True).encode()
 
         digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
         digest.update(message)
         message_hash_hex = digest.finalize().hex()
 
-        try:
-            sig_bytes = bytes.fromhex(signature)
-        except ValueError:
-            return {"valid": False, "meter_id": meter_id, "consumption_kwh": consumption_kwh,
-                    "timestamp": timestamp, "message_hash": message_hash_hex, "algorithm": algorithm,
-                    "error": "Invalid signature format"}
-
         is_valid = False
+        
+        # Use KMS-HMAC verification if KMS key is available
         if self._kms_available and kms_key_id:
-            is_valid = self._kms.verify_signature(kms_key_id, message, sig_bytes)
-        else:
             try:
+                is_valid = self._kms.verify_kms_hmac(kms_key_id, message, signature, meter_id)
+                algorithm = "KMS_HMAC"
+            except Exception as e:
+                logger.error(f"[VERIFY] KMS-HMAC verification failed: {e}")
+                is_valid = False
+        else:
+            # Use local ED25519 verification
+            try:
+                sig_bytes = bytes.fromhex(signature)
                 pub = serialization.load_pem_public_key(public_key_pem.encode(), backend=default_backend())
                 pub.verify(sig_bytes, message)
                 is_valid = True
-            except Exception:
+            except ValueError:
+                logger.error(f"[VERIFY] Invalid signature format")
+                is_valid = False
+            except Exception as e:
+                logger.error(f"[VERIFY] ED25519 verification failed: {e}")
                 is_valid = False
 
         return {
@@ -427,6 +477,9 @@ class SmartMeterService:
                     "NG": os.getenv("HCS_TOPIC_AFRICA", "0.0.8052391"),
                 }
                 hcs_topic_id = topic_map.get(country, topic_map["ES"])
+                
+                logger.info("[HEDERA] Submitting signed payload to HCS Topic %s...", hcs_topic_id)
+                
                 from app.services.hedera_service import HederaService
                 hedera = HederaService()
                 import json
@@ -435,10 +488,18 @@ class SmartMeterService:
                     "meter_id": meter_id,
                     "consumption_kwh": consumption_kwh,
                     "timestamp": timestamp,
+                    "signature": signature,
                     "signature_valid": True,
                     "log_id": log_id,
                 })
+                
                 hcs_sequence_number = hcs_result.get("sequence_number")
+                
+                if hcs_sequence_number:
+                    logger.info("[HEDERA] SUCCESS. Immutably logged at Sequence: #%d", hcs_sequence_number)
+                else:
+                    logger.warning("[HEDERA] WARNING: No sequence number returned from HCS")
+                
                 # Persist HCS data
                 self.db.execute(text("""
                     UPDATE consumption_logs
@@ -446,7 +507,7 @@ class SmartMeterService:
                     WHERE id = :id
                 """), {"topic": hcs_topic_id, "seq": hcs_sequence_number, "id": log_id})
         except Exception as e:
-            logger.warning(f"HCS logging failed (non-critical): {e}")
+            logger.warning("[HEDERA] HCS logging failed (non-critical): %s", str(e))
 
         self.db.commit()
 

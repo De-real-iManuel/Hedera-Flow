@@ -60,7 +60,11 @@ class ReceiptService:
             'text': text_receipt,
             'html': html_receipt,
             'qr_code': qr_code_data,
-            'hashscan_link': hashscan_link
+            'hashscan_link': hashscan_link,
+            'sts_token': sts_token,
+            'units_purchased': units,
+            'amount_paid': amount_fiat,
+            'currency': currency
         }
     
     def _generate_text_receipt(

@@ -467,6 +467,9 @@ class HederaService:
         exchange_rate: float,
         tx_id: str,
     ) -> dict:
+        """
+        Log payment data to HCS using exact Hedera Protobuf specification.
+        """
         from datetime import datetime
         payload = {
             "type": "PAYMENT",
@@ -480,34 +483,53 @@ class HederaService:
             "status": "SUCCESS",
         }
         submitted = False
+        sequence_number = None
+        tx_id_str = None
+        
         try:
             topic_num = _parse_account_num(topic_id)
             secs = int(time.time())
             nanos = time.time_ns() % 1_000_000_000
             node_account, node_host = secrets.choice(_TESTNET_NODES)
             msg = json.dumps(payload).encode("utf-8")
+            
+            # Step 1: Build ConsensusSubmitMessageTransactionBody
             topic_bytes = _build_account_id(0, 0, topic_num)
-            inner = _len_field(1, topic_bytes) + _len_field(2, msg)
-            body = _build_transaction_body(
-                payer=self._operator_id, node=node_account,
-                memo="HederaFlow HCS", fee=100_000_000, duration=120,
-                secs=secs, nanos=nanos,
-                inner_field=50, inner=inner,
-            )
+            consensus_submit_msg = _len_field(1, topic_bytes) + _len_field(2, msg)
+            
+            # Step 2: Build TransactionBody
+            parts = self._operator_id.split(".")
+            acct = _build_account_id(int(parts[0]), int(parts[1]), int(parts[2]))
+            ts = _i64_field(1, secs) + _i64_field(2, nanos)
+            tx_id_proto = _len_field(1, ts) + _len_field(2, acct)
+            
+            np = node_account.split(".")
+            node_acct = _build_account_id(int(np[0]), int(np[1]), int(np[2]))
+            
+            fee = _u64_field(3, 100_000_000)
+            duration = _len_field(4, _i64_field(1, 120))
+            consensus_field = _len_field(27, consensus_submit_msg)
+            
+            # Assemble TransactionBody: fields 1, 2, 3, 4, 27 ONLY
+            body = _len_field(1, tx_id_proto) + _len_field(2, node_acct) + fee + duration + consensus_field
+            
             tx_bytes = _sign_body(body, self._operator_key_raw)
             resp_bytes = _grpc_submit_raw(tx_bytes, node_host, 50211, "/proto.ConsensusService/submitMessage")
             code = _parse_precheck_code(resp_bytes)
-            logger.info(f"HCS gRPC {node_host} code={code}")
+            logger.info(f"[HEDERA] Payment HCS gRPC {node_host} code={code}")
+            
             if code not in (0, 22, 10):
                 raise RuntimeError(f"HCS precheck failed code={code}")
+            
             submitted = True
-            logger.info(f"HCS message submitted to topic {topic_id}")
+            tx_id_str = f"{self._operator_id}@{secs}.{nanos:09d}"
+            
+            sequence_number = self._poll_for_hcs_sequence(tx_id_str, topic_id)
+            logger.info(f"[HEDERA] Payment logged to HCS at Sequence: #{sequence_number}")
+            
         except Exception as exc:
-            logger.warning(f"HCS submit failed (non-critical): {exc}")
+            logger.warning(f"[HEDERA] Payment HCS submit failed (non-critical): {exc}")
 
-        # Only return a real sequence_number if the gRPC call succeeded.
-        # Returning None when it fails prevents fake sequence numbers being stored in the DB.
-        sequence_number = secrets.randbelow(999999) + 1 if submitted else None
         return {"topic_id": topic_id, "sequence_number": sequence_number, "message": payload, "submitted": submitted}
 
     def _poll_for_account_id(self, tx_id_str: str, max_attempts: int = 20) -> str:
@@ -550,35 +572,150 @@ class HederaService:
         return True
 
     def log_to_hcs(self, topic_id: str, payload: dict) -> dict:
-        """Submit an arbitrary JSON payload to an HCS topic using the operator key."""
+        """
+        Submit an arbitrary JSON payload to an HCS topic using the operator key.
+        
+        PRODUCTION: This submits to the REAL Hedera Testnet and returns the ACTUAL sequence number.
+        
+        CRITICAL: Follows exact Hedera Protobuf specification to avoid code 330.
+        
+        Structure:
+        1. ConsensusSubmitMessageTransactionBody (Field 50 of TransactionBody)
+           - Field 1: topicID (AccountID with shard, realm, num)
+           - Field 2: message (bytes)
+           - Field 3: chunkInfo (OMITTED - not needed for <6KiB messages)
+        
+        2. TransactionBody (The Envelope)
+           - Field 1: transactionID
+           - Field 2: nodeAccountID
+           - Field 3: transactionFee (uint64)
+           - Field 4: transactionValidDuration (Duration)
+           - Field 5: generateRecord (OMITTED - boolean, not needed)
+           - Field 6: memo (OMITTED - causes code 330)
+           - Field 50: consensusSubmitMessage (ConsensusSubmitMessageTransactionBody)
+        
+        3. SignedTransaction
+           - Field 1: bodyBytes (serialized TransactionBody)
+           - Field 2: sigMap (signature map)
+        
+        4. Transaction
+           - Field 5: signedTransactionBytes (serialized SignedTransaction)
+        """
         submitted = False
+        sequence_number = None
+        tx_id_str = None
+        
         try:
             topic_num = _parse_account_num(topic_id)
             secs = int(time.time())
             nanos = time.time_ns() % 1_000_000_000
             node_account, node_host = secrets.choice(_TESTNET_NODES)
             msg = json.dumps(payload).encode("utf-8")
+            
+            # Step 1: Build ConsensusSubmitMessageTransactionBody
+            # Field 1: topicID (AccountID: shard=0, realm=0, num=topic_num)
             topic_bytes = _build_account_id(0, 0, topic_num)
-            inner = _len_field(1, topic_bytes) + _len_field(2, msg)
-            body = _build_transaction_body(
-                payer=self._operator_id, node=node_account,
-                memo="HederaFlow HCS", fee=100_000_000, duration=120,
-                secs=secs, nanos=nanos,
-                inner_field=50, inner=inner,
-            )
+            # Field 2: message (bytes)
+            consensus_submit_msg = _len_field(1, topic_bytes) + _len_field(2, msg)
+            # Field 3: chunkInfo - OMITTED (not needed for small messages)
+            
+            # Step 2: Build TransactionBody
+            # Field 1: transactionID
+            parts = self._operator_id.split(".")
+            acct = _build_account_id(int(parts[0]), int(parts[1]), int(parts[2]))
+            ts = _i64_field(1, secs) + _i64_field(2, nanos)
+            tx_id = _len_field(1, ts) + _len_field(2, acct)
+            
+            # Field 2: nodeAccountID
+            np = node_account.split(".")
+            node_acct = _build_account_id(int(np[0]), int(np[1]), int(np[2]))
+            
+            # Field 3: transactionFee (uint64 varint)
+            fee = _u64_field(3, 100_000_000)
+            
+            # Field 4: transactionValidDuration (Duration: seconds only)
+            duration = _len_field(4, _i64_field(1, 120))
+            
+            # Field 5: generateRecord - OMITTED (not setting this field at all)
+            # Field 6: memo - OMITTED (causes code 330)
+            
+            # Field 27: consensusSubmitMessage
+            consensus_field = _len_field(27, consensus_submit_msg)
+            
+            # Assemble TransactionBody in exact field order
+            body = _len_field(1, tx_id) + _len_field(2, node_acct) + fee + duration + consensus_field
+            
+            # Step 3 & 4: Sign and wrap (handled by _sign_body)
             tx_bytes = _sign_body(body, self._operator_key_raw)
+            
+            # Submit to gRPC
             resp_bytes = _grpc_submit_raw(tx_bytes, node_host, 50211, "/proto.ConsensusService/submitMessage")
             code = _parse_precheck_code(resp_bytes)
-            logger.info(f"HCS gRPC {node_host} code={code}")
+            logger.info(f"[HEDERA] gRPC {node_host} response code={code}")
+            
             if code not in (0, 22, 10):
                 raise RuntimeError(f"HCS precheck failed code={code}")
+            
             submitted = True
-            logger.info(f"HCS message submitted to topic {topic_id}")
+            tx_id_str = f"{self._operator_id}@{secs}.{nanos:09d}"
+            
+            # Poll Mirror Node for the REAL sequence number
+            sequence_number = self._poll_for_hcs_sequence(tx_id_str, topic_id)
+            
+            logger.info(f"[HEDERA] SUCCESS. Immutably logged at Sequence: #{sequence_number}")
+            
         except Exception as exc:
-            logger.warning(f"HCS submit failed (non-critical): {exc}")
+            logger.error(f"[HEDERA] HCS submission failed: {exc}")
 
-        sequence_number = secrets.randbelow(999999) + 1 if submitted else None
-        return {"topic_id": topic_id, "sequence_number": sequence_number, "submitted": submitted}
+        return {
+            "topic_id": topic_id,
+            "sequence_number": sequence_number,
+            "submitted": submitted,
+            "tx_id": tx_id_str
+        }
+
+    def _poll_for_hcs_sequence(self, tx_id_str: str, topic_id: str, max_attempts: int = 15) -> Optional[int]:
+        """
+        Poll the Mirror Node to get the REAL sequence number for an HCS message.
+        
+        Returns:
+            The actual sequence number from Hedera network, or None if not found
+        """
+        parts = tx_id_str.split("@")
+        if len(parts) == 2:
+            mirror_tx_id = f"{parts[0]}-{parts[1].replace('.', '-')}"
+        else:
+            mirror_tx_id = tx_id_str.replace("@", "-").replace(".", "-", 2)
+
+        url = f"{_mirror_base()}/transactions/{mirror_tx_id}"
+        
+        for attempt in range(max_attempts):
+            time.sleep(2)  # Wait for consensus
+            try:
+                resp = requests.get(url, timeout=10)
+                if resp.status_code == 200:
+                    txs = resp.json().get("transactions", [])
+                    if txs:
+                        # Look for consensus_timestamp in the transaction
+                        tx_data = txs[0]
+                        consensus_timestamp = tx_data.get("consensus_timestamp")
+                        
+                        if consensus_timestamp:
+                            # Now query the topic messages to find the sequence number
+                            topic_url = f"{_mirror_base()}/topics/{topic_id}/messages"
+                            topic_resp = requests.get(topic_url, params={"limit": 10, "order": "desc"}, timeout=10)
+                            
+                            if topic_resp.status_code == 200:
+                                messages = topic_resp.json().get("messages", [])
+                                for msg in messages:
+                                    if msg.get("consensus_timestamp") == consensus_timestamp:
+                                        return msg.get("sequence_number")
+                        
+            except Exception as exc:
+                logger.debug(f"HCS sequence poll {attempt + 1}: {exc}")
+        
+        logger.warning(f"Could not retrieve HCS sequence number for {tx_id_str} after {max_attempts} attempts")
+        return None
 
     def close(self):
         pass

@@ -323,26 +323,40 @@ async def create_verification(
         
         if hcs_topic_id and hcs_topic_id != "0.0.xxxxx":
             try:
-                logger.info(f"Logging verification to HCS topic {hcs_topic_id}")
+                logger.info(f"[HEDERA] Submitting meter reading to HCS Topic {hcs_topic_id}...")
                 hedera_service = get_hedera_service()
-                # Use log_payment_to_hcs with verification data as a proxy
-                hcs_result = hedera_service.log_payment_to_hcs(
-                    topic_id=hcs_topic_id,
-                    bill_id=str(verification_id),
-                    amount_fiat=float(reading_value),
-                    currency_fiat="READING",
-                    amount_hbar=float(fraud_score),
-                    exchange_rate=float(confidence),
-                    tx_id=f"VERIFY-{str(verification_id)[:8]}"
-                )
+                
+                # Create real payload with actual OCR data
+                hcs_payload = {
+                    "type": "METER_READING_VERIFICATION",
+                    "verification_id": str(verification_id),
+                    "meter_id": meter_data['meter_id'],
+                    "reading_kwh": float(reading_value),
+                    "ocr_confidence": float(confidence),
+                    "ocr_engine": ocr_engine.value,
+                    "fraud_score": float(fraud_score),
+                    "fraud_flags": list(fraud_flags.keys()) if fraud_flags else [],
+                    "verification_status": verification_status.value,
+                    "country": country_code,
+                    "ipfs_image_cid": image_ipfs_hash,
+                    "consumption_kwh": float(consumption_kwh) if consumption_kwh else None,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "user_id": str(current_user.id)
+                }
+                
+                # Submit to HCS with real data
+                hcs_result = hedera_service.log_to_hcs(hcs_topic_id, hcs_payload)
+                
                 hcs_sequence_number = hcs_result.get('sequence_number')
                 hcs_timestamp = datetime.now(timezone.utc) if hcs_result.get('submitted') else None
-                if hcs_result.get('submitted'):
-                    logger.info(f"HCS logging successful: sequence={hcs_sequence_number}")
+                
+                if hcs_result.get('submitted') and hcs_sequence_number:
+                    logger.info(f"[HEDERA] SUCCESS. Immutably logged at Sequence: #{hcs_sequence_number}")
                 else:
-                    logger.warning(f"HCS submit failed — sequence not stored")
+                    logger.warning(f"[HEDERA] WARNING: No sequence number returned from HCS")
+                    
             except Exception as e:
-                logger.error(f"HCS logging failed (non-critical): {e}")
+                logger.error(f"[HEDERA] HCS logging failed (non-critical): {e}")
         else:
             logger.warning(f"HCS topic not configured for country {country_code}, skipping blockchain logging")
         

@@ -72,6 +72,13 @@ class Settings(BaseSettings):
     sendgrid_api_key: Optional[str] = None
     from_email: str = "noreply@hederaflow.com"
     
+    # AWS KMS Configuration
+    aws_access_key_id: Optional[str] = None
+    aws_secret_access_key: Optional[str] = None
+    aws_region: str = "us-east-1"
+    aws_kms_region: str = "us-east-1"
+    aws_kms_master_key_id: Optional[str] = None
+    
     # Rate Limiting
     rate_limit_per_minute: int = 100
     
