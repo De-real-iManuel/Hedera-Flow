@@ -250,6 +250,16 @@ This confirms:
 - The solution is compelling enough to be escalated to their technical review team
 - Port Harcourt is a viable pilot city for the 2026 500-user deployment target
 
+### Ecosystem Validation (Web3 / DePIN)
+
+During the official Hedera Hello Future Apex Hackathon AMA, **Jonathan (Chief Product Officer of Sealcoin)** explicitly outlined the exact infrastructure gap that Hedera Flow is built to solve:
+
+> *"You have dumb meters compared to the smart meters... the smart meters that they're replacing it with, they're just not smart, they're just digitalized, and digital not to the level to what we understand as digital money and digital identities... this is a huge opportunity for us to build these new infrastructures."*
+>
+> — **Jonathan, CPO of Sealcoin**, Building real-world utility infrastructure on Hedera
+
+**The Alignment:** Hedera Flow acts as the exact bridge Jonathan described — using AWS KMS and Hedera HCS to give "digitalized" meters true Web3 identity and real-time settlement capabilities.
+
 ---
 
 ## 9. Go-To-Market Strategy
