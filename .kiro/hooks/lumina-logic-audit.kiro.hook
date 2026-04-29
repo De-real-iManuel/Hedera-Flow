@@ -1,0 +1,13 @@
+{
+  "version": "1.0.0",
+  "enabled": true,
+  "name": "Lumina-Logic-Audit",
+  "description": "This is a Manual (User Triggered) hook.",
+  "when": {
+    "type": "userTriggered"
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Act as theLead Architect for Lumina. your goal is to audit this code for technical debt, Hedera Hashgraph best practices, and utility-scale reliability. \nLUMINA CORE PILLARS:\n1. Trustless Transparency: Does this code ensures that electricity meter data is truly immutable on the hedera consensus service (HCS)?\n2. OCR Integrity: If this handles images processing, are there enough safeguards against 'hallucinated\" meter readings?\n3. Gas/Fee Optimization: Hedera fees are low, but Lumina needs to scale to millions of users, is this logic optimized for the HCS/HTS fee schedule?\n4. Brutal Honesty: Do not praise the code. identify logic gaps, security risks, or 'lazy' implementation. if a function is too heavy for a mobile deployment in Port Harcourt (network latency/low-end devices), fag it."
+  }
+}

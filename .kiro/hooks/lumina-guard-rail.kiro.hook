@@ -1,0 +1,22 @@
+{
+  "version": "1.0.0",
+  "enabled": true,
+  "name": "Lumina-Guard-Rail",
+  "description": "This is an Automated (onSave) hook. it runs every time  I save a file in /contracts, /backend, /src, or /api folder to ensure we are not leaking keys or making basic Web3 mistakes.",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "js",
+      "ts",
+      "sol",
+      "py",
+      "**/*"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "1. Hardcoded private keys or Hedera Account IDs.\n2. Missing error handling for failed Hedera transactions (Receipt vs. Record).\n3. Ensure all utility-related logic uses the correct decimal percision for elecricity units (kwh).\n\nResponse format: if clean, say jabber! if issues found, give a 1-line 'Critical' warning."
+  },
+  "workspaceFolderName": "Hedera Flow",
+  "shortName": "lumina-guard-rail"
+}

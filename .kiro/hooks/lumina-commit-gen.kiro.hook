@@ -1,0 +1,13 @@
+{
+  "version": "1.0.0",
+  "enabled": true,
+  "name": "Lumina-Commit-Gen",
+  "description": "We are building a serious Protocol, our git history needs to look professional for future investors/hackathon judges.",
+  "when": {
+    "type": "userTriggered"
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Review the current diff. Generate a Conventional Commit message.\nUse scopes relevant to Lumina: feat(ocr), fix(hedera-hcs), refactor(meter-logic), docs(api).\nEnsure the description captures the utility impact of the changes."
+  }
+}
