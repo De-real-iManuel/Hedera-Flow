@@ -16,8 +16,8 @@ import boto3
 import json
 import hashlib
 import logging
-from typing import Dict, Optional, Tuple
-from datetime import datetime
+from typing import Dict, List, Optional
+from datetime import datetime, timezone, timedelta
 from botocore.exceptions import ClientError, BotoCoreError
 
 from config import settings
@@ -442,46 +442,130 @@ class AWSKMSService:
         logger.info(f"✅ Private key decrypted from KMS for context: {context_label}")
         return private_key_str
 
-    def get_key_audit_trail(self, key_id: str, hours: int = 24) -> Dict:
+    def verify_signature(self, key_id: str, message: bytes, signature: bytes) -> bool:
         """
-        Get audit trail for KMS key operations
-        
+        Verify a signature using the KMS public key.
+
         Args:
-            key_id: KMS key ID
-            hours: Hours of history to retrieve
-            
+            key_id:    KMS key ID or ARN
+            message:   Original raw message bytes that were signed
+            signature: Signature bytes to verify
+
         Returns:
-            Audit trail information
+            True if the signature is valid, False otherwise.
         """
         try:
-            # This would integrate with CloudTrail API
-            # For demo purposes, return mock audit data
-            
-            logger.info(f"📋 Retrieving audit trail for key {key_id}")
-            
+            response = self.kms_client.verify(
+                KeyId=key_id,
+                Message=message,
+                MessageType='RAW',
+                Signature=signature,
+                SigningAlgorithm='ECDSA_SHA_256'
+            )
+            is_valid = response.get('SignatureValid', False)
+            logger.info(f"KMS verify: {'valid' if is_valid else 'INVALID'} for key {key_id[:20]}...")
+            return is_valid
+        except ClientError as e:
+            logger.error(f"❌ KMS verify failed: {e}")
+            return False
+
+    def get_key_audit_trail(self, key_id: str, hours: int = 24) -> Dict:
+        """
+        Retrieve real KMS key operation history from AWS CloudTrail.
+
+        Queries CloudTrail for all API calls that reference this KMS key
+        within the requested time window. Requires the IAM role to have
+        cloudtrail:LookupEvents permission.
+
+        Args:
+            key_id: KMS key ID or ARN
+            hours:  How many hours of history to retrieve (default 24, max 90 days)
+
+        Returns:
+            Dict with keys:
+                - key_id
+                - audit_period_hours
+                - operations: list of real CloudTrail events
+                - total_operations
+                - failed_operations
+                - source: "cloudtrail" (never "mock")
+        """
+        logger.info(f"📋 Querying CloudTrail for KMS key {key_id[:20]}... (last {hours}h)")
+
+        try:
+            cloudtrail = boto3.client('cloudtrail', region_name=self.region)
+
+            end_time = datetime.now(timezone.utc)
+            start_time = end_time - timedelta(hours=hours)
+
+            # Resolve ARN so we can match both key-id and ARN forms in events
+            try:
+                key_arn = self.kms_client.describe_key(KeyId=key_id)['KeyMetadata']['Arn']
+            except ClientError:
+                key_arn = key_id  # fall back to whatever was passed
+
+            paginator = cloudtrail.get_paginator('lookup_events')
+            pages = paginator.paginate(
+                LookupAttributes=[{'AttributeKey': 'ResourceName', 'AttributeValue': key_arn}],
+                StartTime=start_time,
+                EndTime=end_time,
+                PaginationConfig={'MaxItems': 200, 'PageSize': 50},
+            )
+
+            operations: List[Dict] = []
+            failed = 0
+
+            for page in pages:
+                for event in page.get('Events', []):
+                    raw = event.get('CloudTrailEvent', '{}')
+                    try:
+                        detail = json.loads(raw)
+                    except json.JSONDecodeError:
+                        detail = {}
+
+                    error_code = detail.get('errorCode')
+                    success = error_code is None
+                    if not success:
+                        failed += 1
+
+                    user_identity = detail.get('userIdentity', {})
+                    caller = (
+                        user_identity.get('sessionContext', {}
+                            ).get('sessionIssuer', {}).get('userName')
+                        or user_identity.get('userName')
+                        or user_identity.get('principalId', 'unknown')
+                    )
+
+                    operations.append({
+                        'timestamp': event['EventTime'].isoformat(),
+                        'operation': event.get('EventName', 'Unknown'),
+                        'user': caller,
+                        'source_ip': detail.get('sourceIPAddress', 'unknown'),
+                        'success': success,
+                        'error_code': error_code,
+                        'event_id': event.get('EventId'),
+                    })
+
+            logger.info(f"✅ CloudTrail returned {len(operations)} events for key {key_id[:20]}...")
+
             return {
                 'key_id': key_id,
+                'key_arn': key_arn,
                 'audit_period_hours': hours,
-                'operations': [
-                    {
-                        'timestamp': '2026-03-16T14:30:00Z',
-                        'operation': 'Sign',
-                        'user': 'lambda-execution-role',
-                        'source_ip': '10.0.1.100',
-                        'success': True
-                    },
-                    {
-                        'timestamp': '2026-03-16T14:25:00Z',
-                        'operation': 'GetPublicKey',
-                        'user': 'hedera-flow-api',
-                        'source_ip': '10.0.1.101',
-                        'success': True
-                    }
-                ],
-                'total_operations': 2,
-                'failed_operations': 0
+                'operations': operations,
+                'total_operations': len(operations),
+                'failed_operations': failed,
+                'source': 'cloudtrail',
+                'queried_at': end_time.isoformat(),
             }
-            
+
+        except ClientError as e:
+            error_code = e.response['Error']['Code']
+            if error_code in ('AccessDeniedException', 'UnauthorizedOperation'):
+                raise KMSServiceError(
+                    "CloudTrail access denied. Add cloudtrail:LookupEvents to the IAM policy."
+                )
+            raise KMSServiceError(f"CloudTrail query failed: {e}")
         except Exception as e:
             logger.error(f"❌ Failed to get audit trail: {e}")
             raise KMSServiceError(f"Failed to get audit trail: {str(e)}")

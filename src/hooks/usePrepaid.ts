@@ -6,18 +6,18 @@ import { toast } from 'sonner';
 export function usePrepaid(meterId?: string) {
   const queryClient = useQueryClient();
 
-  // Get balance for a meter - disabled until backend is fixed
+  // Get balance for a meter
   const { data: balance, isLoading: balanceLoading } = useQuery({
     queryKey: ['prepaid-balance', meterId],
     queryFn: () => prepaidApi.getBalance(meterId!),
-    enabled: false, // Disabled temporarily
+    enabled: !!meterId,
   });
 
-  // List all tokens - disabled until backend is fixed
+  // List all tokens
   const { data: tokens, isLoading: tokensLoading } = useQuery({
     queryKey: ['prepaid-tokens', meterId],
-    queryFn: () => prepaidApi.listTokens(meterId),
-    enabled: false, // Disabled temporarily
+    queryFn: () => prepaidApi.listTokens(meterId ? { meterId } : undefined),
+    enabled: true,
   });
 
   // Buy token mutation

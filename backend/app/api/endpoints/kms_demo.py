@@ -158,37 +158,55 @@ async def sign_consumption_data(request: SignConsumptionRequest):
 
 @router.post("/verify-signature")
 async def verify_signature(request: VerifySignatureRequest):
-    """Verify a KMS signature. Passes raw message bytes — matches how signing was done."""
+    """Verify a KMS signature using the KMS public key directly."""
     kms_service = get_kms_service()
     if not kms_service.is_available:
         raise HTTPException(status_code=503, detail="AWS KMS not available.")
-    
+
     try:
-        kms_service = get_kms_service()
-        
-        # message_hash field holds the original raw message (JSON string as hex)
         message = bytes.fromhex(request.message_hash)
         signature = bytes.fromhex(request.signature)
-        
+
         is_valid = kms_service.verify_signature(
             key_id=request.kms_key_id,
             message=message,
-            signature=signature
+            signature=signature,
         )
-        
+
         return {
             "success": True,
             "signature_valid": is_valid,
-            "verification_method": "AWS KMS public key",
-            "timestamp": datetime.utcnow().isoformat()
+            "verification_method": "AWS KMS — ECDSA_SHA_256",
+            "timestamp": datetime.utcnow().isoformat(),
         }
-        
+
     except KMSServiceError as e:
         logger.error(f"❌ Signature verification failed: {e}")
         raise HTTPException(status_code=500, detail=f"Verification failed: {str(e)}")
-    except Exception as e:
+    except (ValueError, Exception) as e:
         logger.error(f"❌ Unexpected error: {e}")
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+
+
+@router.get("/audit-trail/{key_id:path}")
+async def get_audit_trail(key_id: str, hours: int = 24):
+    """
+    Retrieve real CloudTrail audit events for a KMS key.
+
+    Requires cloudtrail:LookupEvents on the IAM role.
+    Returns actual sign/verify/getPublicKey operations with caller identity,
+    source IP, timestamp, and success/failure status.
+    """
+    kms_service = get_kms_service()
+    if not kms_service.is_available:
+        raise HTTPException(status_code=503, detail="AWS KMS not available.")
+
+    try:
+        trail = kms_service.get_key_audit_trail(key_id=key_id, hours=hours)
+        return {"success": True, **trail}
+    except KMSServiceError as e:
+        logger.error(f"❌ Audit trail failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/kms-status")

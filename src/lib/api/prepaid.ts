@@ -22,7 +22,7 @@ export interface PrepaidToken {
   units_remaining: number;
   tariff_rate: number;
   exchange_rate: number;
-  status: 'active' | 'low' | 'depleted' | 'expired' | 'cancelled';
+  status: 'pending' | 'active' | 'low' | 'depleted' | 'expired' | 'cancelled';
   hedera_tx_id: string | null;
   hedera_consensus_timestamp?: string | null;
   hcs_topic_id?: string | null;

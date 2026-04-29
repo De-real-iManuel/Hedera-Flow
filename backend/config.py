@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     
     # Application
     environment: str = "development"
-    debug: bool = True
+    debug: bool = False  # Must be explicitly set to True in .env for development
     
     # Database
     database_url: Optional[str] = None
@@ -40,7 +40,8 @@ class Settings(BaseSettings):
     # JWT
     jwt_secret_key: str
     jwt_algorithm: str = "HS256"
-    jwt_expiration_days: int = 30
+    jwt_access_token_minutes: int = 15   # Access token lifetime in minutes
+    jwt_refresh_token_days: int = 7      # Refresh token lifetime in days
     
     # Hedera
     hedera_network: str = "testnet"

@@ -27,6 +27,7 @@ from app.models.bill import Bill
 from app.models.meter import Meter
 from app.models.utility_provider import UtilityProvider
 from app.services.hedera_service import get_hedera_service
+from app.utils.run_sync import run_sync
 
 logger = logging.getLogger(__name__)
 
@@ -69,39 +70,45 @@ async def prepare_payment(
         )
     
     # Get bill
-    bill = db.query(Bill).filter(
-        Bill.id == bill_uuid,
-        Bill.user_id == current_user.id
-    ).first()
-    
+    bill = await run_sync(
+        lambda: db.query(Bill).filter(
+            Bill.id == bill_uuid,
+            Bill.user_id == current_user.id
+        ).first()
+    )
+
     if not bill:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Bill not found"
         )
-    
+
     if bill.status == 'paid':
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Bill already paid"
         )
-    
+
     # Get meter to find utility provider (FR-6.6, US-7)
-    meter = db.query(Meter).filter(Meter.id == bill.meter_id).first()
+    meter = await run_sync(
+        lambda: db.query(Meter).filter(Meter.id == bill.meter_id).first()
+    )
     if not meter:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Meter not found for this bill"
         )
-    
+
     # Get utility provider to find their Hedera account (FR-6.6, US-7)
     utility_provider = None
     utility_hedera_account = None
-    
+
     if meter.utility_provider_id:
-        utility_provider = db.query(UtilityProvider).filter(
-            UtilityProvider.id == meter.utility_provider_id
-        ).first()
+        utility_provider = await run_sync(
+            lambda: db.query(UtilityProvider).filter(
+                UtilityProvider.id == meter.utility_provider_id
+            ).first()
+        )
         
         if utility_provider and utility_provider.hedera_account_id:
             utility_hedera_account = utility_provider.hedera_account_id
@@ -257,23 +264,25 @@ async def confirm_payment(
         )
     
     # Get bill
-    bill = db.query(Bill).filter(
-        Bill.id == bill_uuid,
-        Bill.user_id == current_user.id
-    ).first()
-    
+    bill = await run_sync(
+        lambda: db.query(Bill).filter(
+            Bill.id == bill_uuid,
+            Bill.user_id == current_user.id
+        ).first()
+    )
+
     if not bill:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Bill not found"
         )
-    
+
     if bill.status == 'paid':
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Bill already paid"
         )
-    
+
     # Validate rate lock (FR-17.4, FR-6.13)
     # Check if the rate lock is still valid (within 5-minute window)
     from app.utils.redis_client import redis_client
@@ -418,30 +427,29 @@ async def confirm_payment(
         hedera_service = get_hedera_service()
         
         # Log payment using HederaService method
-        hcs_result = hedera_service.log_payment_to_hcs(
+        hcs_result = await hedera_service.log_to_hcs_async(
             topic_id=hcs_topic_id,
-            bill_id=str(bill.id),
-            amount_fiat=float(bill.total_fiat),
-            currency_fiat=bill.currency,
-            amount_hbar=float(amount_hbar),
-            exchange_rate=float(exchange_rate),
-            tx_id=request.hedera_tx_id
+            payload={
+                "type": "PAYMENT",
+                "bill_id": str(bill.id),
+                "amount_fiat": float(bill.total_fiat),
+                "currency_fiat": bill.currency,
+                "amount_hbar": float(amount_hbar),
+                "exchange_rate": float(exchange_rate),
+                "tx_id": request.hedera_tx_id,
+                "status": "SUCCESS",
+            }
         )
-        
-        # Store HCS reference in bill
         bill.hcs_topic_id = hcs_result["topic_id"]
         bill.hcs_sequence_number = hcs_result["sequence_number"]
-        
         logger.info(f"✅ Payment logged to HCS topic {hcs_topic_id}, sequence: {hcs_result['sequence_number']}")
-        
+
     except Exception as e:
         logger.error(f"Failed to log payment to HCS: {e}")
-        # Don't fail the payment if HCS logging fails
-        # In production, you might want to retry or queue for later processing
-    
+
     # Commit all changes
-    db.commit()
-    db.refresh(bill)
+    await run_sync(db.commit)
+    await run_sync(db.refresh, bill)
     
     logger.info(f"✅ Payment confirmed for bill {bill.id}, tx: {request.hedera_tx_id}")
     
@@ -485,19 +493,23 @@ async def pay_custodial(
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid bill ID format")
 
-    bill = db.query(Bill).filter(Bill.id == bill_uuid, Bill.user_id == current_user.id).first()
+    bill = await run_sync(
+        lambda: db.query(Bill).filter(Bill.id == bill_uuid, Bill.user_id == current_user.id).first()
+    )
     if not bill:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Bill not found")
     if bill.status == "paid":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Bill already paid")
 
     # Get utility provider Hedera account
-    from app.models.meter import Meter
-    meter = db.query(Meter).filter(Meter.id == bill.meter_id).first()
+    meter = await run_sync(
+        lambda: db.query(Meter).filter(Meter.id == bill.meter_id).first()
+    )
     utility_hedera_account = None
     if meter and meter.utility_provider_id:
-        from app.models.utility_provider import UtilityProvider
-        up = db.query(UtilityProvider).filter(UtilityProvider.id == meter.utility_provider_id).first()
+        up = await run_sync(
+            lambda: db.query(UtilityProvider).filter(UtilityProvider.id == meter.utility_provider_id).first()
+        )
         if up and up.hedera_account_id:
             utility_hedera_account = up.hedera_account_id
     if not utility_hedera_account:
@@ -574,22 +586,26 @@ async def pay_custodial(
     }
     hcs_topic_id = country_to_topic.get(bill.currency, os.getenv("HEDERA_TOPIC_EU", "0.0.5078302"))
     try:
-        hcs_result = hedera_service.log_payment_to_hcs(
+        hcs_result = await hedera_service.log_to_hcs_async(
             topic_id=hcs_topic_id,
-            bill_id=str(bill.id),
-            amount_fiat=float(bill.total_fiat),
-            currency_fiat=bill.currency,
-            amount_hbar=amount_hbar,
-            exchange_rate=float(hbar_price),
-            tx_id=tx_id,
+            payload={
+                "type": "PAYMENT",
+                "bill_id": str(bill.id),
+                "amount_fiat": float(bill.total_fiat),
+                "currency_fiat": bill.currency,
+                "amount_hbar": amount_hbar,
+                "exchange_rate": float(hbar_price),
+                "tx_id": tx_id,
+                "status": "SUCCESS",
+            }
         )
         bill.hcs_topic_id = hcs_result["topic_id"]
         bill.hcs_sequence_number = hcs_result["sequence_number"]
     except Exception as e:
         logger.warning(f"HCS logging failed (non-fatal): {e}")
 
-    db.commit()
-    db.refresh(bill)
+    await run_sync(db.commit)
+    await run_sync(db.refresh, bill)
     logger.info(f"Custodial payment complete: bill={bill.id}, tx={tx_id}")
 
     return {
@@ -628,18 +644,20 @@ async def get_payment(
             detail="Invalid payment ID format"
         )
     
-    bill = db.query(Bill).filter(
-        Bill.id == bill_uuid,
-        Bill.user_id == current_user.id,
-        Bill.status == 'paid'
-    ).first()
-    
+    bill = await run_sync(
+        lambda: db.query(Bill).filter(
+            Bill.id == bill_uuid,
+            Bill.user_id == current_user.id,
+            Bill.status == 'paid'
+        ).first()
+    )
+
     if not bill:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Payment not found"
         )
-    
+
     return PaymentReceipt(
         id=str(bill.id),
         bill_id=str(bill.id),
@@ -703,20 +721,24 @@ async def get_payment_receipt(
         )
     
     # Get bill with meter relationship
-    bill = db.query(Bill).filter(
-        Bill.id == bill_uuid,
-        Bill.user_id == current_user.id,
-        Bill.status == 'paid'
-    ).first()
-    
+    bill = await run_sync(
+        lambda: db.query(Bill).filter(
+            Bill.id == bill_uuid,
+            Bill.user_id == current_user.id,
+            Bill.status == 'paid'
+        ).first()
+    )
+
     if not bill:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Payment not found"
         )
-    
+
     # Get meter details
-    meter = db.query(Meter).filter(Meter.id == bill.meter_id).first()
+    meter = await run_sync(
+        lambda: db.query(Meter).filter(Meter.id == bill.meter_id).first()
+    )
     
     # Prepare bill data for PDF generation
     bill_data = {
@@ -808,10 +830,12 @@ async def list_payments(
     Returns:
         List of PaymentReceipt objects
     """
-    bills = db.query(Bill).filter(
-        Bill.user_id == current_user.id,
-        Bill.status == 'paid'
-    ).order_by(Bill.paid_at.desc()).all()
+    bills = await run_sync(
+        lambda: db.query(Bill).filter(
+            Bill.user_id == current_user.id,
+            Bill.status == 'paid'
+        ).order_by(Bill.paid_at.desc()).all()
+    )
     
     return [
         PaymentReceipt(

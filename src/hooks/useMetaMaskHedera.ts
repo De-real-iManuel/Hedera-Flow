@@ -279,6 +279,11 @@ export const useMetaMaskHedera = () => {
         .map(b => b.toString(16).padStart(2, '0'))
         .join('');
 
+      // Hedera EVM: use a fixed gas limit for simple HBAR transfers.
+      // This prevents MetaMask from showing an inflated fee estimate
+      // and avoids the "caution" warning on the transaction review screen.
+      const GAS_LIMIT = '0x5208'; // 21000 — standard transfer gas
+
       // Request transaction from MetaMask
       const txHash = await window.ethereum.request({
         method: 'eth_sendTransaction',
@@ -287,6 +292,7 @@ export const useMetaMaskHedera = () => {
           to: toAddress,
           value: amountHex,
           data: memoHex,
+          gas: GAS_LIMIT,
         }],
       });
 
@@ -321,16 +327,22 @@ export const useMetaMaskHedera = () => {
 
       console.log('Transaction confirmed:', receipt);
 
+      // Check if transaction succeeded - receipt.status can be '0x1', 1, or true
+      const isSuccess = receipt.status === '0x1' || receipt.status === 1 || receipt.status === true;
+
       return {
         transactionHash: txHash,
-        status: receipt.status === '0x1' ? 'success' : 'failed',
+        status: isSuccess ? 'success' : 'failed',
         receipt,
       };
     } catch (error: any) {
       console.error('Payment failed:', error);
       
-      if (error.code === 4001) {
-        throw new Error('Transaction rejected by user');
+      // 4001 = user rejected, surface a clean message instead of a stack trace
+      if (error.code === 4001 || error.message?.includes('User denied')) {
+        const rejection = new Error('Transaction cancelled. You rejected the payment in MetaMask.');
+        (rejection as any).userRejected = true;
+        throw rejection;
       }
       
       throw error;

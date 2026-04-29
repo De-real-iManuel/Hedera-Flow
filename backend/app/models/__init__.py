@@ -9,6 +9,7 @@ from app.models.exchange_rate import ExchangeRate
 from app.models.prepaid_token import PrepaidToken
 from app.models.smart_meter_key import SmartMeterKey
 from app.models.consumption_log import ConsumptionLog
+from app.models.dispute import Dispute
 
 __all__ = [
     "User", 
@@ -22,6 +23,7 @@ __all__ = [
     "ExchangeRate",
     "PrepaidToken",
     "SmartMeterKey",
-    "ConsumptionLog"
+    "ConsumptionLog",
+    "Dispute"
 ]
 

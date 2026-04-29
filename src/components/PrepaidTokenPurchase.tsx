@@ -329,6 +329,16 @@ export function PrepaidTokenPurchase({
     } catch (err) {
       console.error('Purchase failed:', err);
       const errorMessage = err instanceof Error ? err.message : 'Purchase failed';
+
+      // User deliberately cancelled — don't show an error state, just a soft notice
+      if ((err as any)?.userRejected) {
+        toast.info('Transaction cancelled', {
+          description: 'You cancelled the MetaMask transaction. No funds were sent.',
+          duration: 4000,
+        });
+        return;
+      }
+
       setError(errorMessage);
       
       // Error notification with clear error message

@@ -242,6 +242,31 @@ export const exchangeRateApi = {
 // Prepaid API
 export { prepaidApi } from './api/prepaid';
 
+// Disputes API
+import type { Dispute, DisputeCreateRequest } from '@/types/api';
+
+export const disputesApi = {
+  create: async (data: DisputeCreateRequest): Promise<Dispute> => {
+    const response = await apiClient.post<Dispute>('/disputes', data);
+    return response.data;
+  },
+
+  list: async (status?: string): Promise<Dispute[]> => {
+    const params = status ? { status } : {};
+    const response = await apiClient.get<Dispute[]>('/disputes', { params });
+    return response.data;
+  },
+
+  get: async (disputeId: string): Promise<Dispute> => {
+    const response = await apiClient.get<Dispute>(`/disputes/${disputeId}`);
+    return response.data;
+  },
+
+  cancel: async (disputeId: string): Promise<Dispute> => {
+    const response = await apiClient.post<Dispute>(`/disputes/${disputeId}/cancel`);
+    return response.data;
+  },
+};
 // User Profile API
 export interface NotificationPreferences {
   bill_reminders: boolean;

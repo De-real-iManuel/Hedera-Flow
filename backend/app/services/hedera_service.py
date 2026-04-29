@@ -7,6 +7,7 @@ Signing: cryptography Ed25519
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -62,7 +63,6 @@ def _load_operator_key():
     if not raw:
         raise RuntimeError("HEDERA_OPERATOR_KEY not set")
     raw_bytes = _hex_to_raw32(raw)
-    logger.info(f"Operator raw key (first 8 bytes): {raw_bytes[:8].hex()}")
     priv = Ed25519PrivateKey.from_private_bytes(raw_bytes)
     from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
     derived_pub = priv.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw).hex()
@@ -388,7 +388,7 @@ class HederaService:
         inner = _build_crypto_create(new_pub, int(initial_balance_hbar * 100_000_000))
         body = _build_transaction_body(
             payer=self._operator_id, node=node_account,
-            memo="HederaFlow custodial account",
+            memo="",
             fee=200_000_000, duration=120,
             secs=secs, nanos=nanos,
             inner_field=11, inner=inner,
@@ -435,7 +435,6 @@ class HederaService:
                 inner_field=14, inner=inner,
             )
             tx_bytes = _sign_body(body, payer_private_key_hex)
-            logger.info(f"TX body hex (first 60 bytes): {body[:60].hex()}")
             try:
                 resp_bytes = _grpc_submit_raw(tx_bytes, node_host, 50211, "/proto.CryptoService/cryptoTransfer")
                 code = _parse_precheck_code(resp_bytes)
@@ -533,6 +532,7 @@ class HederaService:
         return {"topic_id": topic_id, "sequence_number": sequence_number, "message": payload, "submitted": submitted}
 
     def _poll_for_account_id(self, tx_id_str: str, max_attempts: int = 20) -> str:
+        """Synchronous poll — only called from create_account which runs in a thread via run_sync."""
         parts = tx_id_str.split("@")
         if len(parts) == 2:
             mirror_tx_id = f"{parts[0]}-{parts[1].replace('.', '-')}"
@@ -541,7 +541,7 @@ class HederaService:
 
         url = f"{_mirror_base()}/transactions/{mirror_tx_id}"
         for attempt in range(max_attempts):
-            time.sleep(3)
+            time.sleep(3)  # safe — always called inside run_sync thread
             try:
                 resp = requests.get(url, timeout=10)
                 if resp.status_code == 200:
@@ -568,8 +568,132 @@ class HederaService:
             return False
 
     def verify_signature(self, account_id: str, message: str, signature: str) -> bool:
-        logger.warning(f"Signature verification skipped for {account_id}")
-        return True
+        """
+        Verify a signature against the public key registered on Hedera for the given account.
+
+        Fetches the account's key from the Mirror Node, detects Ed25519 vs secp256k1,
+        and verifies locally using the `cryptography` library.
+
+        Args:
+            account_id: Hedera account ID (e.g. "0.0.12345")
+            message:    The original plaintext message that was signed
+            signature:  Hex-encoded signature bytes
+
+        Returns:
+            True if the signature is valid, False otherwise.
+        """
+        try:
+            resp = requests.get(f"{_mirror_base()}/accounts/{account_id}", timeout=10)
+            resp.raise_for_status()
+            account_data = resp.json()
+
+            key_info = account_data.get("key", {})
+            key_type = key_info.get("_type", "")   # "ED25519" or "ECDSA_SECP256K1"
+            key_hex = key_info.get("key", "")       # hex-encoded public key
+
+            if not key_hex:
+                logger.error(f"No public key found on Mirror Node for account {account_id}")
+                return False
+
+            message_bytes = message.encode("utf-8")
+            sig_bytes = bytes.fromhex(signature)
+
+            if key_type == "ED25519":
+                from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+                pub = Ed25519PublicKey.from_public_bytes(bytes.fromhex(key_hex))
+                pub.verify(sig_bytes, message_bytes)   # raises InvalidSignature on failure
+                logger.info(f"Ed25519 signature valid for account {account_id}")
+                return True
+
+            elif key_type == "ECDSA_SECP256K1":
+                from cryptography.hazmat.primitives.asymmetric.ec import (
+                    EllipticCurvePublicKey, SECP256K1, ECDSA, EllipticCurvePublicNumbers
+                )
+                from cryptography.hazmat.primitives.hashes import SHA256
+                from cryptography.hazmat.primitives.serialization import (
+                    Encoding, PublicFormat
+                )
+                from cryptography.hazmat.backends import default_backend
+
+                pub_bytes = bytes.fromhex(key_hex)
+                # Mirror Node returns the compressed 33-byte public key
+                from cryptography.hazmat.primitives.asymmetric.ec import (
+                    EllipticCurvePublicKey
+                )
+                pub = EllipticCurvePublicKey.from_encoded_point(SECP256K1(), pub_bytes)
+                pub.verify(sig_bytes, message_bytes, ECDSA(SHA256()))
+                logger.info(f"ECDSA secp256k1 signature valid for account {account_id}")
+                return True
+
+            else:
+                logger.error(f"Unsupported key type '{key_type}' for account {account_id}")
+                return False
+
+        except Exception as exc:
+            # cryptography raises InvalidSignature (subclass of Exception) on bad sigs
+            logger.warning(f"Signature verification failed for {account_id}: {exc}")
+            return False
+
+    async def log_to_hcs_async(self, topic_id: str, payload: dict) -> dict:
+        """
+        Async version of log_to_hcs — submits the gRPC call in a thread
+        (gRPC is blocking) then polls with asyncio.sleep so the event loop
+        is never stalled.
+        """
+        from app.utils.run_sync import run_sync
+
+        submitted = False
+        sequence_number = None
+        tx_id_str = None
+
+        try:
+            topic_num = _parse_account_num(topic_id)
+            secs = int(time.time())
+            nanos = time.time_ns() % 1_000_000_000
+            node_account, node_host = secrets.choice(_TESTNET_NODES)
+            msg = json.dumps(payload).encode("utf-8")
+
+            topic_bytes = _build_account_id(0, 0, topic_num)
+            consensus_submit_msg = _len_field(1, topic_bytes) + _len_field(2, msg)
+
+            parts = self._operator_id.split(".")
+            acct = _build_account_id(int(parts[0]), int(parts[1]), int(parts[2]))
+            ts = _i64_field(1, secs) + _i64_field(2, nanos)
+            tx_id = _len_field(1, ts) + _len_field(2, acct)
+
+            np = node_account.split(".")
+            node_acct = _build_account_id(int(np[0]), int(np[1]), int(np[2]))
+            fee = _u64_field(3, 100_000_000)
+            duration = _len_field(4, _i64_field(1, 120))
+            consensus_field = _len_field(27, consensus_submit_msg)
+            body = _len_field(1, tx_id) + _len_field(2, node_acct) + fee + duration + consensus_field
+            tx_bytes = _sign_body(body, self._operator_key_raw)
+
+            # gRPC submit is blocking — run in thread
+            resp_bytes = await run_sync(
+                _grpc_submit_raw, tx_bytes, node_host, 50211,
+                "/proto.ConsensusService/submitMessage"
+            )
+            code = _parse_precheck_code(resp_bytes)
+            logger.info(f"[HEDERA] gRPC {node_host} response code={code}")
+
+            if code not in (0, 22, 10):
+                raise RuntimeError(f"HCS precheck failed code={code}")
+
+            submitted = True
+            tx_id_str = f"{self._operator_id}@{secs}.{nanos:09d}"
+            sequence_number = await self._poll_for_hcs_sequence_async(tx_id_str, topic_id)
+            logger.info(f"[HEDERA] SUCCESS. Immutably logged at Sequence: #{sequence_number}")
+
+        except Exception as exc:
+            logger.error(f"[HEDERA] HCS submission failed: {exc}")
+
+        return {
+            "topic_id": topic_id,
+            "sequence_number": sequence_number,
+            "submitted": submitted,
+            "tx_id": tx_id_str,
+        }
 
     def log_to_hcs(self, topic_id: str, payload: dict) -> dict:
         """
@@ -674,47 +798,82 @@ class HederaService:
             "tx_id": tx_id_str
         }
 
-    def _poll_for_hcs_sequence(self, tx_id_str: str, topic_id: str, max_attempts: int = 15) -> Optional[int]:
+    async def _poll_for_hcs_sequence_async(
+        self, tx_id_str: str, topic_id: str, max_attempts: int = 15
+    ) -> Optional[int]:
         """
-        Poll the Mirror Node to get the REAL sequence number for an HCS message.
-        
-        Returns:
-            The actual sequence number from Hedera network, or None if not found
+        Async poll for the HCS sequence number — uses asyncio.sleep so the
+        event loop is never blocked while waiting for Hedera consensus.
         """
-        parts = tx_id_str.split("@")
-        if len(parts) == 2:
-            mirror_tx_id = f"{parts[0]}-{parts[1].replace('.', '-')}"
-        else:
-            mirror_tx_id = tx_id_str.replace("@", "-").replace(".", "-", 2)
+        from app.utils.run_sync import run_sync
 
+        parts = tx_id_str.split("@")
+        mirror_tx_id = (
+            f"{parts[0]}-{parts[1].replace('.', '-')}"
+            if len(parts) == 2
+            else tx_id_str.replace("@", "-").replace(".", "-", 2)
+        )
         url = f"{_mirror_base()}/transactions/{mirror_tx_id}"
-        
+
         for attempt in range(max_attempts):
-            time.sleep(2)  # Wait for consensus
+            await asyncio.sleep(2)  # yield to event loop — never blocks
+            try:
+                resp = await run_sync(requests.get, url, timeout=10)
+                if resp.status_code == 200:
+                    txs = resp.json().get("transactions", [])
+                    if txs:
+                        consensus_timestamp = txs[0].get("consensus_timestamp")
+                        if consensus_timestamp:
+                            topic_url = f"{_mirror_base()}/topics/{topic_id}/messages"
+                            topic_resp = await run_sync(
+                                requests.get, topic_url,
+                                params={"limit": 10, "order": "desc"}, timeout=10
+                            )
+                            if topic_resp.status_code == 200:
+                                for msg in topic_resp.json().get("messages", []):
+                                    if msg.get("consensus_timestamp") == consensus_timestamp:
+                                        return msg.get("sequence_number")
+            except Exception as exc:
+                logger.debug(f"HCS sequence poll {attempt + 1}: {exc}")
+
+        logger.warning(
+            f"Could not retrieve HCS sequence number for {tx_id_str} after {max_attempts} attempts"
+        )
+        return None
+
+    def _poll_for_hcs_sequence(self, tx_id_str: str, topic_id: str, max_attempts: int = 15) -> Optional[int]:
+        """Synchronous fallback — only safe when called inside a run_sync thread."""
+        parts = tx_id_str.split("@")
+        mirror_tx_id = (
+            f"{parts[0]}-{parts[1].replace('.', '-')}"
+            if len(parts) == 2
+            else tx_id_str.replace("@", "-").replace(".", "-", 2)
+        )
+        url = f"{_mirror_base()}/transactions/{mirror_tx_id}"
+
+        for attempt in range(max_attempts):
+            time.sleep(2)  # safe — only called from run_sync thread
             try:
                 resp = requests.get(url, timeout=10)
                 if resp.status_code == 200:
                     txs = resp.json().get("transactions", [])
                     if txs:
-                        # Look for consensus_timestamp in the transaction
-                        tx_data = txs[0]
-                        consensus_timestamp = tx_data.get("consensus_timestamp")
-                        
+                        consensus_timestamp = txs[0].get("consensus_timestamp")
                         if consensus_timestamp:
-                            # Now query the topic messages to find the sequence number
                             topic_url = f"{_mirror_base()}/topics/{topic_id}/messages"
-                            topic_resp = requests.get(topic_url, params={"limit": 10, "order": "desc"}, timeout=10)
-                            
+                            topic_resp = requests.get(
+                                topic_url, params={"limit": 10, "order": "desc"}, timeout=10
+                            )
                             if topic_resp.status_code == 200:
-                                messages = topic_resp.json().get("messages", [])
-                                for msg in messages:
+                                for msg in topic_resp.json().get("messages", []):
                                     if msg.get("consensus_timestamp") == consensus_timestamp:
                                         return msg.get("sequence_number")
-                        
             except Exception as exc:
                 logger.debug(f"HCS sequence poll {attempt + 1}: {exc}")
-        
-        logger.warning(f"Could not retrieve HCS sequence number for {tx_id_str} after {max_attempts} attempts")
+
+        logger.warning(
+            f"Could not retrieve HCS sequence number for {tx_id_str} after {max_attempts} attempts"
+        )
         return None
 
     def close(self):

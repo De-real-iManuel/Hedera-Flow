@@ -1,0 +1,11 @@
+{
+	"folders": [
+		{
+			"name": "Hedera Flow",
+			"path": ".."
+		}
+	],
+	"settings": {
+		"typescript.autoClosingTags": false
+	}
+}

@@ -27,6 +27,7 @@ from app.services.ipfs_service import get_ipfs_service
 from app.services.billing_service import calculate_bill_with_tariff_fetch, BillingCalculationError
 from app.services.exchange_rate_service import get_hbar_price
 from app.services.hedera_service import get_hedera_service
+from app.utils.run_sync import run_sync
 from config import settings
 
 router = APIRouter()
@@ -103,10 +104,12 @@ async def create_verification(
             WHERE id = :meter_id AND user_id = :user_id
         """)
         
-        meter_result = db.execute(
-            meter_query,
-            {"meter_id": meter_id, "user_id": current_user.id}
-        ).fetchone()
+        meter_result = await run_sync(
+            lambda: db.execute(
+                meter_query,
+                {"meter_id": meter_id, "user_id": current_user.id}
+            ).fetchone()
+        )
         
         if not meter_result:
             logger.warning(f"Meter {meter_id} not found for user {current_user.id}")
@@ -208,10 +211,12 @@ async def create_verification(
             LIMIT 1
         """)
         
-        previous_result = db.execute(
-            previous_reading_query,
-            {"meter_id": meter_id, "user_id": current_user.id}
-        ).fetchone()
+        previous_result = await run_sync(
+            lambda: db.execute(
+                previous_reading_query,
+                {"meter_id": meter_id, "user_id": current_user.id}
+            ).fetchone()
+        )
         
         previous_reading = Decimal(str(previous_result[0])) if previous_result else None
         consumption_kwh = None
@@ -233,10 +238,12 @@ async def create_verification(
             LIMIT 10
         """)
         
-        historical_results = db.execute(
-            historical_query,
-            {"meter_id": meter_id, "user_id": current_user.id}
-        ).fetchall()
+        historical_results = await run_sync(
+            lambda: db.execute(
+                historical_query,
+                {"meter_id": meter_id, "user_id": current_user.id}
+            ).fetchall()
+        )
         
         previous_readings = [float(row[0]) for row in historical_results]
         
@@ -306,10 +313,12 @@ async def create_verification(
             SELECT country_code FROM users WHERE id = :user_id
         """)
         
-        user_country_result = db.execute(
-            user_country_query,
-            {"user_id": current_user.id}
-        ).fetchone()
+        user_country_result = await run_sync(
+            lambda: db.execute(
+                user_country_query,
+                {"user_id": current_user.id}
+            ).fetchone()
+        )
         
         country_code = user_country_result[0] if user_country_result else 'ES'
         hcs_topic_id = get_topic_for_country(country_code)
@@ -345,7 +354,7 @@ async def create_verification(
                 }
                 
                 # Submit to HCS with real data
-                hcs_result = hedera_service.log_to_hcs(hcs_topic_id, hcs_payload)
+                hcs_result = await hedera_service.log_to_hcs_async(hcs_topic_id, hcs_payload)
                 
                 hcs_sequence_number = hcs_result.get('sequence_number')
                 hcs_timestamp = datetime.now(timezone.utc) if hcs_result.get('submitted') else None
@@ -379,34 +388,34 @@ async def create_verification(
                       status, hcs_topic_id, hcs_sequence_number, hcs_timestamp, created_at
         """)
         
-        result = db.execute(
-            insert_query,
-            {
-                'id': verification_id,
-                'user_id': current_user.id,
-                'meter_id': uuid.UUID(meter_id),
-                'reading_value': reading_value,
-                'previous_reading': previous_reading,
-                'consumption_kwh': consumption_kwh,
-                'image_ipfs_hash': image_ipfs_hash,
-                'ocr_engine': ocr_engine.value,
-                'confidence': confidence,
-                'raw_ocr_text': raw_ocr_text,
-                'fraud_score': fraud_score,
-                'fraud_flags': json.dumps(fraud_flags),
-                'utility_reading': None,
-                'utility_api_response': None,
-                'status': verification_status.value,
-                'hcs_topic_id': hcs_topic_id,
-                'hcs_sequence_number': hcs_sequence_number,
-                'hcs_timestamp': hcs_timestamp,
-                'created_at': datetime.now(timezone.utc)
-            }
-        )
-        
-        db.commit()
-        
-        verification_row = result.fetchone()
+        verification_row = await run_sync(
+            lambda: db.execute(insert_query, {...}).fetchone()
+            )
+        # execute with params inline
+        verification_row = await run_sync(
+            lambda p={
+                    'id': verification_id,
+                    'user_id': current_user.id,
+                    'meter_id': uuid.UUID(meter_id),
+                    'reading_value': reading_value,
+                    'previous_reading': previous_reading,
+                    'consumption_kwh': consumption_kwh,
+                    'image_ipfs_hash': image_ipfs_hash,
+                    'ocr_engine': ocr_engine.value,
+                    'confidence': confidence,
+                    'raw_ocr_text': raw_ocr_text,
+                    'fraud_score': fraud_score,
+                    'fraud_flags': json.dumps(fraud_flags),
+                    'utility_reading': None,
+                    'utility_api_response': None,
+                    'status': verification_status.value,
+                    'hcs_topic_id': hcs_topic_id,
+                    'hcs_sequence_number': hcs_sequence_number,
+                    'hcs_timestamp': hcs_timestamp,
+                    'created_at': datetime.now(timezone.utc)
+                }: db.execute(insert_query, p).fetchone()
+             )
+        await run_sync(db.commit)
         
         logger.info(f"Verification saved to database: {verification_id}")
         

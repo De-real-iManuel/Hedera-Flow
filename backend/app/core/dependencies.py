@@ -12,6 +12,7 @@ import logging
 from app.core.database import get_db
 from app.models.user import User
 from app.utils.auth import decode_access_token
+from app.utils.run_sync import run_sync
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -107,7 +108,9 @@ async def get_current_user(
                 detail="Invalid user ID in token"
             )
         
-        user = db.query(User).filter(User.id == user_uuid).first()
+        user = await run_sync(
+            lambda: db.query(User).filter(User.id == user_uuid).first()
+        )
         
         if user is None:
             logger.warning(f"Authentication failed: User {user_id} not found in database")

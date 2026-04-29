@@ -61,31 +61,38 @@ export interface MeterCreateRequest {
 
 export interface Bill {
   id: string;
+  user_id: string;
   meter_id: string;
-  billing_period_start: string;
-  billing_period_end: string;
-  reading_previous: number;
-  reading_current: number;
+  verification_id: string | null;
   consumption_kwh: number;
-  amount_due: number;
+  base_charge: number;
+  taxes: number;
+  subsidies: number;
+  total_fiat: number;
   currency: string;
-  due_date: string;
-  status: 'pending' | 'paid' | 'overdue' | 'disputed';
+  tariff_id: string | null;
+  tariff_snapshot: Record<string, any> | null;
+  amount_hbar: number | null;
+  exchange_rate: number | null;
+  exchange_rate_timestamp: string | null;
+  status: 'pending' | 'paid' | 'disputed' | 'refunded';
+  hedera_tx_id: string | null;
+  hedera_consensus_timestamp: string | null;
+  hcs_topic_id: string | null;
+  hcs_sequence_number: number | null;
   created_at: string;
-  updated_at: string;
+  paid_at: string | null;
 }
 
 export interface BillBreakdown {
-  energy_charge: number;
-  service_charge: number;
-  vat: number;
-  total: number;
-  tariff_details: {
-    tier: string;
-    kwh: number;
-    rate: number;
-    amount: number;
-  }[];
+  consumption_kwh: number;
+  base_charge: number;
+  taxes: number;
+  subsidies: number;
+  total_fiat: number;
+  currency: string;
+  rate_structure_type: string;
+  rate_details: Record<string, any> | null;
 }
 
 export interface Payment {
@@ -164,4 +171,32 @@ export interface BillSummary {
   currency: string;
   amount_hbar?: number;
   exchange_rate?: number;
+}
+
+export interface Dispute {
+  id: string;
+  dispute_id: string;
+  user_id: string;
+  bill_id: string;
+  reason: 'OVERCHARGE' | 'METER_ERROR' | 'TARIFF_ERROR' | 'OTHER';
+  description: string;
+  evidence_ipfs_hashes: string[];
+  escrow_amount_hbar: number;
+  escrow_amount_fiat: number;
+  escrow_currency: string;
+  escrow_tx_id: string;
+  status: 'pending' | 'under_review' | 'resolved_user' | 'resolved_utility' | 'cancelled';
+  resolution_notes: string | null;
+  resolved_by: string | null;
+  resolved_at: string | null;
+  hcs_topic_id: string;
+  hcs_sequence_number: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DisputeCreateRequest {
+  bill_id: string;
+  reason: Dispute['reason'];
+  description: string;
 }

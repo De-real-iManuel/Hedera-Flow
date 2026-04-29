@@ -41,7 +41,7 @@ const BillsPage = () => {
       setBills(fetchedBills);
       
       // Select the first unpaid bill by default
-      const unpaidBill = fetchedBills.find(b => b.status === 'pending' || b.status === 'overdue');
+      const unpaidBill = fetchedBills.find(b => b.status === 'pending' || b.status === 'disputed');
       if (unpaidBill) {
         setSelectedBill(unpaidBill);
       } else if (fetchedBills.length > 0) {
@@ -63,7 +63,7 @@ const BillsPage = () => {
     if (!bill) return null;
 
     // Calculate charges from bill data
-    const totalAmount = bill.amount_due;
+    const totalAmount = bill.total_fiat;
     const vatRate = 0.075; // 7.5% VAT for Nigeria
     const serviceChargeRate = 0.065; // ~6.5% service charge
     const platformFeeRate = 0.03; // 3% platform service charge
@@ -176,7 +176,7 @@ const BillsPage = () => {
                 <h2 className="text-2xl font-bold text-foreground">Payment Successful!</h2>
                 <p className="text-sm text-muted-foreground mt-1">
                   {selectedBill.currency === 'NGN' ? '₦' : selectedBill.currency}
-                  {selectedBill.amount_due.toLocaleString()} paid via HBAR
+                  {selectedBill.total_fiat.toLocaleString()} paid via HBAR
                 </p>
               </div>
               <div className="glass-card p-4 w-full space-y-2">
@@ -200,16 +200,16 @@ const BillsPage = () => {
                   <span className="text-muted-foreground">Amount</span>
                   <span className="text-foreground font-semibold">
                     {selectedBill.currency === 'NGN' ? '₦' : selectedBill.currency}
-                    {selectedBill.amount_due.toLocaleString()}
+                    {selectedBill.total_fiat.toLocaleString()}
                   </span>
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Bill Period</span>
                   <span className="text-foreground">
-                    {new Date(selectedBill.billing_period_start).toLocaleDateString('en-US', { 
+                    {new Date(selectedBill.created_at).toLocaleDateString('en-US', { 
                       month: 'short', 
                       day: 'numeric' 
-                    })} - {new Date(selectedBill.billing_period_end).toLocaleDateString('en-US', { 
+                    })} - {new Date(selectedBill.paid_at ?? selectedBill.created_at).toLocaleDateString('en-US', { 
                       month: 'short', 
                       day: 'numeric',
                       year: 'numeric'
@@ -275,7 +275,7 @@ const BillsPage = () => {
                 <p className="text-lg font-semibold text-foreground">Confirm Payment</p>
                 <p className="text-sm text-muted-foreground mt-1">
                   Verify with biometrics to pay {selectedBill.currency === 'NGN' ? '₦' : selectedBill.currency}
-                  {selectedBill.amount_due.toLocaleString()}
+                  {selectedBill.total_fiat.toLocaleString()}
                 </p>
               </div>
               <div className="flex items-center gap-1.5 text-xs text-muted-foreground">

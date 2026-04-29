@@ -51,32 +51,6 @@ class PrepaidTokenBuyRequest(BaseModel):
     currency: str = Field(..., pattern=r"^[A-Z]{3}$", description="3-letter currency code (EUR, USD, etc.)")
     payment_method: str = Field(default="HBAR", pattern=r"^(HBAR|USDC)$", description="Payment method: HBAR or USDC")
 
-    class PrepaidTokenPreviewRequest(BaseModel):
-        """Request to preview prepaid token purchase calculation"""
-        meter_id: str = Field(..., description="UUID of the meter")
-        amount_fiat: float = Field(..., gt=0, description="Amount in local currency")
-        currency: str = Field(..., pattern=r"^[A-Z]{3}$", description="3-letter currency code (EUR, USD, etc.)")
-        payment_method: str = Field(default="HBAR", pattern=r"^(HBAR|USDC)$", description="Payment method: HBAR or USDC")
-
-
-    class PrepaidTokenPreviewResponse(BaseModel):
-        """Preview of prepaid token purchase calculation"""
-        amount_fiat: float
-        currency: str
-        amount_hbar: float | None
-        amount_usdc: float | None
-        units_kwh: float
-        exchange_rate: float
-        tariff_rate: float
-
-
-    class PrepaidTokenBuyRequest(BaseModel):
-        """Request to buy prepaid electricity tokens"""
-        meter_id: str = Field(..., description="UUID of the meter")
-        amount_fiat: float = Field(..., gt=0, description="Amount in local currency")
-        currency: str = Field(..., pattern=r"^[A-Z]{3}$", description="3-letter currency code (EUR, USD, etc.)")
-        payment_method: str = Field(default="HBAR", pattern=r"^(HBAR|USDC)$", description="Payment method: HBAR or USDC")
-
 
 class PrepaidTokenResponse(BaseModel):
     """Prepaid token details"""

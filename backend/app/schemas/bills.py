@@ -58,7 +58,7 @@ class BillResponse(BaseModel):
     currency: Currency
     
     # Tariff used
-    tariff_id: str
+    tariff_id: Optional[str]
     tariff_snapshot: Optional[dict]
     
     # Payment data
